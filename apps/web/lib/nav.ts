@@ -17,7 +17,7 @@ export const NAV: NavItem[] = [
   { href: "/opportunities", label: "Opportunity Leaderboard", key: "l", group: "Markets", phase: 3,
     summary: "Explainable, evidence-ranked setups. May legitimately be empty." },
   { href: "/charts", label: "Advanced Charts", key: "c", group: "Markets", phase: 2,
-    summary: "Candles, VWAP, opening range, prior-day and overnight levels." },
+    summary: "Candles and volume on nine timeframes, each labelled with provider and data class." },
   { href: "/copilot", label: "AI Copilot", key: "i", group: "Markets", phase: 5,
     summary: "Ask questions answered from verified application data via controlled tools." },
   { href: "/account", label: "Apex Account Health", key: "a", group: "Account", phase: 4,
@@ -39,6 +39,9 @@ export const NAV: NavItem[] = [
   { href: "/system", label: "System Health", key: "y", group: "System", phase: 1,
     summary: "Live status of API, database, cache, worker and data feeds." },
 ];
+
+/** Pages whose phase is at or below this are implemented. */
+export const COMPLETED_PHASE = 2;
 
 export const NAV_GROUPS = ["Markets", "Account", "Research", "System"] as const;
 

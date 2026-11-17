@@ -15,6 +15,11 @@ const apiEnv = {
   APEX_ENVIRONMENT: "test",
   APEX_CORS_ORIGINS: `["http://localhost:${WEB_PORT}"]`,
   APEX_AUTH_RATE_LIMIT_PER_MINUTE: "100",
+  // Clearly-labelled synthetic data so chart workflows can be exercised end to end.
+  APEX_MARKET_DATA_PROVIDER: "simulated",
+  APEX_MARKET_DATA_SYMBOLS: '["ES","NQ","CL"]',
+  // 80h always reaches back past a weekend closure.
+  APEX_MARKET_DATA_BACKFILL_HOURS: "80",
 };
 
 export default defineConfig({

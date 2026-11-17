@@ -48,7 +48,7 @@ async def reset_db() -> int:
         print("Refusing to reset a production database", file=sys.stderr)
         return 1
     async with get_engine().begin() as conn:
-        await conn.execute(text("TRUNCATE audit_logs, users RESTART IDENTITY CASCADE"))
+        await conn.execute(text("TRUNCATE candles, audit_logs, users RESTART IDENTITY CASCADE"))
     print("Database tables truncated")
     return 0
 

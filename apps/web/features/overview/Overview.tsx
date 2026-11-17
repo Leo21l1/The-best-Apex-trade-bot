@@ -1,15 +1,22 @@
 "use client";
 
+import type { SnapshotResponse } from "@apex/shared-types";
 import Link from "next/link";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, EmptyState, Panel, QualityBadge, Stat, StatePill } from "@/components/ui/primitives";
+import { usePolling } from "@/hooks/usePolling";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
+import { formatPrice } from "@/lib/candles";
 import { formatEt, formatUsd, humanizeComponent } from "@/lib/format";
-import { NAV } from "@/lib/nav";
+import { COMPLETED_PHASE, NAV } from "@/lib/nav";
 import { PROVISIONAL_APEX_RULES, TRADER_PROFILE } from "@/lib/profile";
+
+const TICKS: Record<string, number> = { ES: 0.25, NQ: 0.25, YM: 1, RTY: 0.1, CL: 0.01, GC: 0.1 };
 
 export function Overview() {
   const { status } = useSystemStatus();
+  const { data: snap } = usePolling<SnapshotResponse>("/api/market/snapshot", 10_000);
+  const quality = snap?.provenance.quality ?? "unavailable";
   return (
     <>
       <PageHeader path="/" />
@@ -27,27 +34,57 @@ export function Overview() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <Panel title="Market data" className="lg:col-span-2">
-          <div className="mb-3 flex items-center gap-2">
-            <QualityBadge quality="unavailable" />
-            <span className="text-sm text-muted">No licensed provider connected</span>
-          </div>
+        <Panel
+          title="Market data"
+          className="lg:col-span-2"
+          actions={<QualityBadge quality={quality} />}
+        >
+          <p className="mb-3 text-sm text-muted" data-testid="market-provenance">
+            {quality === "unavailable"
+              ? (snap?.provenance.note ?? "No market data provider configured.")
+              : `Provider: ${snap?.provenance.provider} · as of ${formatEt(snap!.provenance.as_of)}`}
+          </p>
+          {quality === "simulated" && (
+            <p className="mb-3 text-xs text-warn">
+              SIMULATED — synthetic prices for development, not real market data.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {TRADER_PROFILE.instruments.map((i) => (
-              <div key={i.symbol} className="rounded-md border border-line bg-panel-2 px-3 py-2">
-                <p className="font-mono text-sm">
-                  {i.symbol} <span className="text-faint">/ {i.micro}</span>
-                </p>
-                <p className="truncate text-xs text-faint">{i.name}</p>
-                <p className="mt-1 font-mono text-sm text-faint" aria-label="price unavailable">
-                  —
-                </p>
-              </div>
-            ))}
+            {TRADER_PROFILE.instruments.map((i) => {
+              const item = snap?.items.find((x) => x.symbol === i.symbol);
+              const show = quality !== "unavailable" && item?.last != null;
+              return (
+                <Link
+                  key={i.symbol}
+                  href="/charts"
+                  className="rounded-md border border-line bg-panel-2 px-3 py-2 hover:border-faint"
+                >
+                  <p className="font-mono text-sm">
+                    {i.symbol} <span className="text-faint">/ {i.micro}</span>
+                  </p>
+                  <p className="truncate text-xs text-faint">{i.name}</p>
+                  {show ? (
+                    <>
+                      <p className="mt-1 font-mono text-sm" data-testid={`last-${i.symbol}`}>
+                        {formatPrice(item.last!, TICKS[i.symbol] ?? 0.01)}
+                      </p>
+                      <p className={item.stale ? "text-[11px] text-warn" : "text-[11px] text-faint"}>
+                        {item.stale ? "STALE · " : ""}
+                        bar {item.last_bar ? formatEt(item.last_bar) : "—"}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-1 font-mono text-sm text-faint" aria-label="price unavailable">
+                      —
+                    </p>
+                  )}
+                </Link>
+              );
+            })}
           </div>
           <p className="mt-3 text-xs text-faint">
-            Prices are never fabricated. They will appear with provider and timestamp once a
-            market-data adapter is connected (Phase 2).
+            Values are the latest stored 1-minute close. Every price shows its provider,
+            timestamp and data class; prices are never fabricated.
           </p>
         </Panel>
 
@@ -113,8 +150,8 @@ export function Overview() {
                 <Link href={n.href} className="text-muted hover:text-text">
                   {n.label}
                 </Link>
-                <span className={n.phase <= 1 ? "text-xs text-up" : "text-xs text-faint"}>
-                  {n.phase <= 1 ? "Available" : `Phase ${n.phase}`}
+                <span className={n.phase <= COMPLETED_PHASE ? "text-xs text-up" : "text-xs text-faint"}>
+                  {n.phase <= COMPLETED_PHASE ? "Available" : `Phase ${n.phase}`}
                 </span>
               </li>
             ))}

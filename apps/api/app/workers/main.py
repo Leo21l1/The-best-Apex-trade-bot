@@ -16,9 +16,13 @@ import time
 
 from redis.exceptions import RedisError
 
+from app.adapters.marketdata.base import ProviderError
 from app.core.config import get_settings
+from app.core.db import dispose_engine, get_sessionmaker
 from app.core.logging import configure_logging, log_event
 from app.core.redis import close_redis, get_redis
+from app.marketdata.factory import build_provider
+from app.marketdata.feed import IngestionService
 from app.services.health import WORKER_HEARTBEAT_KEY
 
 log = logging.getLogger("apex.worker")
@@ -30,8 +34,31 @@ async def heartbeat_once() -> None:
     await get_redis().set(WORKER_HEARTBEAT_KEY, payload, ex=HEARTBEAT_INTERVAL_S * 12)
 
 
+def start_ingestion(stop: asyncio.Event) -> asyncio.Task[None] | None:
+    """Start market-data ingestion when a provider is configured."""
+    settings = get_settings()
+    try:
+        provider = build_provider(settings)
+    except ProviderError as exc:
+        log_event(log, "market data provider unavailable", level=logging.ERROR, error=str(exc))
+        return None
+    if provider is None:
+        log_event(log, "market data disabled (APEX_MARKET_DATA_PROVIDER=none)")
+        return None
+    service = IngestionService(
+        provider,
+        settings.market_data_symbols,
+        get_sessionmaker(),
+        get_redis(),
+        backfill_hours=settings.market_data_backfill_hours,
+    )
+    log_event(log, "ingestion starting", provider=provider.info.name)
+    return asyncio.create_task(service.run(stop))
+
+
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
+    ingestion = start_ingestion(stop)
     while not stop.is_set():
         try:
             await heartbeat_once()
@@ -41,7 +68,12 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
+    if ingestion is not None:
+        await asyncio.wait({ingestion}, timeout=10)
+        if not ingestion.done():
+            ingestion.cancel()
     await close_redis()
+    await dispose_engine()
     log_event(log, "worker stopped")
 
 

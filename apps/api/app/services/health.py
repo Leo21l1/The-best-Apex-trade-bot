@@ -112,12 +112,6 @@ def static_components() -> list[ComponentStatus]:
     now = _now()
     return [
         ComponentStatus(
-            name="market_data",
-            state=ComponentState.NOT_CONFIGURED,
-            detail="No licensed market data provider connected. No prices shown.",
-            checked_at=now,
-        ),
-        ComponentStatus(
             name="apex_rule_profile",
             state=ComponentState.NOT_CONFIGURED,
             detail="Rule profile not loaded. No trade can be labelled compliant.",
@@ -151,8 +145,13 @@ def overall_state(components: list[ComponentStatus]) -> ComponentState:
 
 async def system_status() -> SystemStatus:
     s = get_settings()
-    db, redis, worker = await asyncio.gather(check_database(), check_redis(), check_worker())
-    components = [db, redis, worker, *static_components()]
+    from app.marketdata.status import current_quality, market_data_component
+
+    db, redis, worker, md = await asyncio.gather(
+        check_database(), check_redis(), check_worker(), market_data_component()
+    )
+    components = [db, redis, worker, md, *static_components()]
+    quality, provider = await current_quality()
     return SystemStatus(
         app=s.app_name,
         version=s.version,
@@ -162,5 +161,7 @@ async def system_status() -> SystemStatus:
         timezone=s.timezone,
         server_time=_now(),
         overall=overall_state(components),
+        market_data_quality=quality,
+        market_data_provider=provider,
         components=components,
     )

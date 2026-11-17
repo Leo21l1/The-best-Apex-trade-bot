@@ -35,6 +35,9 @@ async def test_system_status_is_honest(admin_client: httpx.AsyncClient) -> None:
     body = r.json()
     assert body["execution_mode"] == "ANALYSIS_ONLY"
     assert body["live_order_routing"] is False
+    names = [c["name"] for c in body["components"]]
+    assert len(names) == len(set(names)), "each component is reported exactly once"
+    assert body["market_data_quality"] == "unavailable" and body["market_data_provider"] is None
     comps = {c["name"]: c for c in body["components"]}
     # Nothing that is not built may claim to be OK.
     assert comps["market_data"]["state"] == "not_configured"

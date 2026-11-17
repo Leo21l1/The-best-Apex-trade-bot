@@ -25,6 +25,8 @@ export interface SystemStatus {
   timezone: string;
   server_time: string;
   overall: ComponentState;
+  market_data_quality: DataQuality;
+  market_data_provider: string | null;
   components: ComponentStatus[];
 }
 
@@ -54,4 +56,101 @@ export interface WsFrame<T = unknown> {
   seq: number;
   ts: string;
   data: T;
+}
+
+export type Timeframe = "1m" | "3m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
+
+export interface Instrument {
+  symbol: string;
+  name: string;
+  exchange: string;
+  asset_class: string;
+  tick_size: number;
+  is_micro: boolean;
+  sibling: string;
+}
+
+/** OHLCV bar; `t` is the bar open time in epoch seconds (UTC). */
+export interface Bar {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+export interface Provenance {
+  provider: string | null;
+  quality: DataQuality;
+  as_of: string;
+  last_bar: string | null;
+  stale: boolean;
+  note: string | null;
+}
+
+export interface CandlesResponse {
+  symbol: string;
+  timeframe: Timeframe;
+  provenance: Provenance;
+  bars: Bar[];
+}
+
+export interface SnapshotItem {
+  symbol: string;
+  last: number | null;
+  last_bar: string | null;
+  age_seconds: number | null;
+  stale: boolean;
+}
+
+export interface SnapshotResponse {
+  provenance: Provenance;
+  items: SnapshotItem[];
+}
+
+export interface SymbolFreshness {
+  symbol: string;
+  last_bar: string | null;
+  age_seconds: number | null;
+  stale: boolean;
+}
+
+export interface FeedStatus {
+  configured_provider: string;
+  reporting: boolean;
+  state: string;
+  quality: DataQuality;
+  verified: boolean | null;
+  description: string | null;
+  market_open: boolean;
+  reconnects: number;
+  duplicates_dropped: number;
+  invalid_dropped: number;
+  bars_stored: number;
+  last_error: string | null;
+  stale_after_seconds: number;
+  symbols: SymbolFreshness[];
+  as_of: string;
+}
+
+export interface GapReport {
+  symbol: string;
+  provider: string | null;
+  window_start: string;
+  window_end: string;
+  expected_bars: number;
+  present_bars: number;
+  missing_bars: number;
+  gaps: { start: string; end: string; missing_bars: number }[];
+  note: string;
+}
+
+/** 1-minute bar update pushed on WebSocket topic `candles:<SYMBOL>`. */
+export interface LiveCandle extends Bar {
+  symbol: string;
+  timeframe: "1m";
+  closed: boolean;
+  provider: string;
+  quality: DataQuality;
 }

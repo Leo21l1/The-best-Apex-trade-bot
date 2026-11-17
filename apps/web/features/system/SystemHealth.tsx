@@ -1,8 +1,10 @@
 "use client";
 
+import type { FeedStatus } from "@apex/shared-types";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
-import { Callout, Panel, Stat, StatePill } from "@/components/ui/primitives";
+import { Callout, Panel, QualityBadge, Stat, StatePill } from "@/components/ui/primitives";
+import { usePolling } from "@/hooks/usePolling";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { formatAge, formatEt, humanizeComponent } from "@/lib/format";
 
@@ -90,6 +92,9 @@ export function SystemHealth() {
           )}
         </Panel>
       </div>
+      <div className="mt-4">
+        <FeedPanel />
+      </div>
       {status && (
         <p className="mt-3 text-xs text-faint">
           {status.app} v{status.version} · {status.environment} · server time{" "}
@@ -97,5 +102,72 @@ export function SystemHealth() {
         </p>
       )}
     </>
+  );
+}
+
+function FeedPanel() {
+  const { data: feed } = usePolling<FeedStatus>("/api/market/status", 5_000);
+  if (!feed) return null;
+  return (
+    <Panel
+      title="Market data feed"
+      actions={<QualityBadge quality={feed.reporting ? feed.quality : "unavailable"} />}
+    >
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Provider" value={feed.configured_provider} />
+        <Stat label="State" value={<span data-testid="feed-state">{feed.state}</span>} />
+        <Stat label="Market" value={feed.market_open ? "open" : "closed"} />
+        <Stat label="Reconnects" value={feed.reconnects} />
+        <Stat label="Duplicates dropped" value={feed.duplicates_dropped} />
+        <Stat label="Invalid bars dropped" value={feed.invalid_dropped} />
+      </div>
+      {feed.verified === false && (
+        <p className="mt-3 text-xs text-warn">
+          This adapter has not been verified against the live service.
+        </p>
+      )}
+      {feed.last_error && (
+        <p className="mt-3 text-xs text-muted">
+          Last error: <span className="font-mono">{feed.last_error}</span>
+        </p>
+      )}
+      {feed.configured_provider !== "none" && (
+        <div className="-mx-4 mt-3 overflow-x-auto">
+          <table className="w-full min-w-[480px] text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs text-faint">
+                <th className="px-4 py-2 font-medium">Symbol</th>
+                <th className="px-4 py-2 font-medium">Last bar</th>
+                <th className="px-4 py-2 text-right font-medium">Age</th>
+                <th className="px-4 py-2 text-right font-medium">Freshness</th>
+              </tr>
+            </thead>
+            <tbody>
+              {feed.symbols.map((s) => (
+                <tr key={s.symbol} className="border-b border-line/60 last:border-0">
+                  <td className="px-4 py-2 font-mono">{s.symbol}</td>
+                  <td className="px-4 py-2 font-mono text-muted">
+                    {s.last_bar ? formatEt(s.last_bar, true) : "—"}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono text-muted">
+                    {s.age_seconds != null ? formatAge(Math.floor(s.age_seconds)) : "—"}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <StatePill
+                      state={s.stale ? "degraded" : "ok"}
+                      label={s.stale ? "Stale" : feed.market_open ? "Fresh" : "Market closed"}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="mt-3 text-xs text-faint">
+        A symbol is stale when the market is open and no bar has arrived for{" "}
+        {feed.stale_after_seconds}s after the bar period.
+      </p>
+    </Panel>
   );
 }

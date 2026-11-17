@@ -20,8 +20,14 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
     await expect(page.getByTestId("execution-mode")).toHaveText("ANALYSIS ONLY");
     await expect(page.getByText("Apex rule profile is UNVERIFIED")).toBeVisible();
-    // Honest empty states: no fabricated prices or opportunities.
-    await expect(page.getByText("No licensed provider connected")).toBeVisible();
+    // Market data is labelled with its provider and data class; no fabricated opportunities.
+    await expect(page.getByTestId("market-provenance")).toContainText("Provider: simulated", {
+      timeout: 30_000,
+    });
+    await expect(page.getByText(/SIMULATED — synthetic prices/)).toBeVisible();
+    await expect(page.getByTestId("last-ES")).toHaveText(/^\d{1,3}(,\d{3})*\.\d{2}$/, {
+      timeout: 30_000,
+    });
     await expect(page.getByText("No opportunities ranked")).toBeVisible();
   });
 
@@ -47,7 +53,11 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page.getByTestId("component-worker")).toContainText("Operational", {
       timeout: 15_000,
     });
-    await expect(page.getByTestId("component-market_data")).toContainText("Not configured");
+    await expect(page.getByTestId("component-market_data")).toContainText("simulated (SIMULATED)", {
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId("component-apex_rule_profile")).toContainText("Not configured");
+    await expect(page.getByTestId("feed-state")).toHaveText("streaming", { timeout: 30_000 });
 
     // Command palette -> Risk Guardian
     await page.keyboard.press("Control+k");
@@ -70,7 +80,8 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
     const pages: [string, string][] = [
       ["/radar", "Market Radar"], ["/opportunities", "Opportunity Leaderboard"],
-      ["/charts", "Advanced Charts"], ["/copilot", "AI Copilot"],
+      ["/charts", "Advanced Charts"],
+      ["/copilot", "AI Copilot"],
       ["/account", "Apex Account Health"], ["/risk", "Risk Guardian"],
       ["/strategies", "Strategy Laboratory"], ["/backtesting", "Backtesting"],
       ["/journal", "Trading Journal"], ["/performance", "Performance Analytics"],

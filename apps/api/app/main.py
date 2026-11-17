@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.deps import client_ip
-from app.api.routes import auth, health, ws
+from app.api.routes import auth, health, market, ws
 from app.core.config import Environment, get_settings
 from app.core.db import dispose_engine
 from app.core.execution_guard import POLICY
@@ -116,6 +116,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(market.router, prefix="/api")
     app.include_router(ws.router, prefix="/api")
     return app
 

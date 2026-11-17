@@ -30,6 +30,9 @@ class SystemStatus(BaseModel):
     timezone: str
     server_time: datetime
     overall: ComponentState
+    #: Provenance class of market data currently being served ("unavailable" if none).
+    market_data_quality: str
+    market_data_provider: str | None
     components: list[ComponentStatus]
 
 

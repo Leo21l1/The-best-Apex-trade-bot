@@ -15,13 +15,14 @@ dependencies = [
     "pyjwt>=2.10,<3",
     "argon2-cffi>=25,<26",
     "email-validator>=2.2,<3",
+    "httpx>=0.28,<0.30",
+    "tzdata>=2025.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4,<10",
     "pytest-asyncio>=1.0,<2",
-    "httpx>=0.28,<0.30",
     "ruff>=0.12,<0.20",
     "pip-audit>=2.9,<3",
 ]

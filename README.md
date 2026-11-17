@@ -13,15 +13,17 @@ $50K EOD Evaluation traded manually on Tradovate.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Monorepo, API + web foundations, database & migrations, auth, health checks, dashboard shell, tests, CI | **Done** (see [phase report](docs/phase-reports/phase-1.md)) |
-| 2 | Market-data adapters, historical storage, streaming, charts, data-quality monitoring | Next |
-| 3 | Instrument specs, strategies A–H, scanner, opportunity scoring, alerts | Planned |
+| 2 | Market-data adapters, historical storage, streaming, charts, data-quality monitoring | **Done** with simulated data; real-data adapter unverified (see [phase report](docs/phase-reports/phase-2.md)) |
+| 3 | Instrument specs, strategies A–H, scanner, opportunity scoring, alerts | Next |
 | 4 | Verified Apex rule profiles, risk engine, account snapshots / CSV import | Planned |
 | 5 | Claude copilot, economic calendar, briefings | Planned |
 | 6 | Backtesting, paper-trading simulator, journal, walk-forward | Planned |
 | 7 | Hardening, security review, performance, deployment | Planned |
 
 The Apex rule values in this repo are **provisional and unverified** until Phase 4 checks each one
-against official Apex documentation. No price is shown until a licensed data provider is connected.
+against official Apex documentation. No price is shown unless a market-data provider is configured
+(`APEX_MARKET_DATA_PROVIDER`); the built-in `simulated` provider produces synthetic prices that are
+labelled SIMULATED everywhere and must not be used for trading.
 
 ## Layout
 

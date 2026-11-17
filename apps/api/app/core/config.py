@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -65,6 +66,27 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     log_json: bool = True
+
+    # Market data (Phase 2). "none" shows no prices anywhere.
+    market_data_provider: Literal["none", "simulated", "databento"] = "none"
+    market_data_symbols: list[str] = [
+        "ES",
+        "MES",
+        "NQ",
+        "MNQ",
+        "YM",
+        "MYM",
+        "RTY",
+        "M2K",
+        "CL",
+        "MCL",
+        "GC",
+        "MGC",
+    ]
+    market_data_backfill_hours: int = Field(default=72, ge=1, le=24 * 30)
+    # A feed is stale when the market is open and no bar arrived for this long.
+    market_data_stale_seconds: int = Field(default=150, ge=10)
+    databento_api_key: SecretStr | None = None
 
     # AI (Phase 5). Optional; never sent to the browser.
     anthropic_api_key: SecretStr | None = None

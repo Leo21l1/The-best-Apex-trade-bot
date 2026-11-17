@@ -49,7 +49,7 @@ export function TopBar({
         </span>
         <span className="hidden items-center gap-1.5 sm:flex" title={market?.detail}>
           <span className="text-xs text-faint">Data</span>
-          <QualityBadge quality={market?.state === "ok" ? "live" : "unavailable"} />
+          <QualityBadge quality={status?.market_data_quality ?? "unavailable"} />
         </span>
         {rules && rules.state !== "ok" && (
           <span className="hidden xl:inline" title={rules.detail}>
