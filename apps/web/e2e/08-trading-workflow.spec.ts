@@ -41,14 +41,15 @@ test("news → idea → chart → plan → paper execution → close → journal
   test.skip(!status.market_open, "Futures market closed: the simulator correctly rejects orders");
 
   // 4-5. Plan and paper execution.
-  await page.getByLabel("Terminal instrument").selectOption("MES");
+  await page.getByLabel("Terminal instrument").selectOption("ES");
+  await expect(page.getByTestId("terminal-last")).not.toHaveText("—", { timeout: 30_000 });
   const last = Number((await page.getByTestId("terminal-last").textContent())!.replace(/,/g, ""));
   const q = (x: number) => (Math.round(x * 4) / 4).toString();
   await page.getByLabel("Ticket stop").fill(q(last - 5));
   await page.getByLabel("Ticket target").fill(q(last + 10));
   await page.getByLabel("Ticket thesis").fill("Workflow test thesis");
   await expect(page.getByTestId("ticket-math")).toContainText("Reward:risk");
-  await page.getByRole("button", { name: /BUY 1 MES — paper/ }).click();
+  await page.getByRole("button", { name: /BUY 1 ES — paper/ }).click();
   await expect(page.getByTestId("ticket-msg")).toContainText("sent to the paper simulator");
 
   // 6-7. Position tracked, then closed.
@@ -61,7 +62,7 @@ test("news → idea → chart → plan → paper execution → close → journal
   await page.getByTestId("journal-table").getByRole("link", { name: "Review" }).first().click();
   await expect(page.getByTestId("trade-review")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("journal-sections")).toContainText("Workflow test thesis");
-  await expect(page.getByTestId("journal-sections")).toContainText("Long 1 MES (simulated (paper))");
+  await expect(page.getByTestId("journal-sections")).toContainText("Long 1 ES (simulated (paper))");
   await expect(page.getByTestId("scenarios")).toContainText("Followed the original plan");
   await page.getByRole("button", { name: "Generate AI review" }).click();
   await expect(page.getByText("What went well").first()).toBeVisible({ timeout: 20_000 });
