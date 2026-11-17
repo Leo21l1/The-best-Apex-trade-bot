@@ -9,6 +9,7 @@ import { formatPrice, TIMEFRAMES } from "@/lib/candles";
 import { formatEt } from "@/lib/format";
 import { CandleChart, type OverlayToggles } from "./CandleChart";
 import { NewsMarkerList, NewsPanel, OverlayToggleBar, SignalBadge, useOverlays } from "./overlayParts";
+import { ReadinessPanel } from "../session/ReadinessPanel";
 import { useCandles } from "./useCandles";
 
 export function Charts() {
@@ -175,6 +176,10 @@ export function Charts() {
           </div>
         )}
       </Panel>
+
+      <div className="mt-4">
+        <ReadinessPanel symbol={symbol} refreshKey={bars.length ? bars[bars.length - 1]!.t : null} />
+      </div>
 
       {!unavailable && gaps && (
         <div className="mt-4">

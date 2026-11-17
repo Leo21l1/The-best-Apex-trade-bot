@@ -304,3 +304,39 @@ async def test_copilot_readiness_tool_payload(admin_client: httpx.AsyncClient) -
         and "never less" in SYSTEM_PROMPT
         and "WAIT, REVIEW SETUP or NO TRADE" in SYSTEM_PROMPT
     )
+
+
+async def test_trade_review_records_session_and_checklist_at_entry_without_lookahead() -> None:
+    from decimal import Decimal
+
+    from app.marketdata.types import Candle, DataQuality, Timeframe
+    from tests.test_p8_trading import T_ENTRY, add_trade, reviewed, seed, trade_path
+
+    await seed(trade_path())
+    t = await reviewed(await add_trade())
+    se = t.context["session_at_entry"]
+    assert se["entry_et"].startswith("2026-11-11 11:00:00") and se["window"]["key"] == "morning"
+    assert se["market"]["open"] is True and len(se["checklist"]["items"]) == 8
+    assert se["planned_reward_risk"] == 3.0  # (5012-5000)/(5000-4996)
+    assert se["stop_reached_during_trade"] is False and se["target_reached_during_trade"] is False
+    before = [(i["key"], i["status"], i["reason"]) for i in se["checklist"]["items"]]
+    # Changing bars AFTER entry must not change the at-entry checklist.
+    later = [
+        Candle(
+            "ES",
+            Timeframe.M1,
+            T_ENTRY + timedelta(minutes=k),
+            Decimal("4000"),
+            Decimal("4000"),
+            Decimal("3990"),
+            Decimal("3995"),
+            99999,
+            "simulated",
+            DataQuality.SIMULATED,
+        )
+        for k in range(25, 60)
+    ]
+    await seed(later)
+    t2 = await reviewed(await add_trade(source_key="2", entry_time=T_ENTRY))
+    after = [(i["key"], i["status"], i["reason"]) for i in t2.context["session_at_entry"]["checklist"]["items"]]
+    assert after == before

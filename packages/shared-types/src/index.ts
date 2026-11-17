@@ -910,6 +910,7 @@ export interface TradeDetail extends JournalTrade {
     plan: Record<string, unknown> | null;
     r_multiple: number | null;
     duration_seconds: number;
+    session_at_entry?: SessionAtEntry;
   };
   review: TradeReview | null;
   reviewed_at: string | null;
@@ -1060,3 +1061,46 @@ export interface SmcScanCard {
 }
 
 export interface SmcScan { as_of: string; ranked: SmcScanCard[]; watch: SmcScanCard[]; note: string }
+
+// ---- Trading session intelligence / readiness checklist ----------------------------------
+
+export type CheckStatus = "PASS" | "FAIL" | "WAIT" | "UNKNOWN";
+export interface CheckItem { key: string; name: string; status: CheckStatus; reason: string; evidence?: Record<string, unknown>; calculation?: string }
+export interface SessionWindow { key: string; label: string; start: string | null; end: string | null }
+export interface SessionMarket { open: boolean; reason: string; early_close: boolean; calendar: string; trading_date?: string; next_open?: string | null }
+export interface Checklist {
+  symbol: string; as_of: string; ny_time: string; style: string; window: SessionWindow; market: SessionMarket;
+  items: CheckItem[]; passed: number; total: number; failures: string[]; unknowns: string[]; critical: string[];
+  status: "WAIT" | "REVIEW SETUP" | "NO TRADE"; direction: string | null;
+  relative_volume: { available: boolean; ratio?: number | null; current_volume?: number; reference_volume?: number; window_et?: string; reason?: string; acceleration?: number | null };
+  relative_volatility: { available: boolean; ratio?: number | null; label?: string; reason?: string };
+  regime: { label: string; efficiency_ratio_2h: number | null; vwap_crosses_today: number; definition: string };
+  disclaimer: string;
+}
+export interface Readiness {
+  session: { ny_time: string; trading_date: string; window: SessionWindow; next_transition: { label: string; at: string; at_et: string; in_minutes: number }; market: SessionMarket };
+  data: { status: string; reason?: string | null; provider?: string; last_bar?: string | null; age_seconds?: number };
+  news: { status: string; summary: string };
+  risk: { known: boolean; risk_budget: number | null; rules_verified: boolean } | null;
+  setup: { strategy_id: string; direction: string; entry: number; stop: number; targets: number[]; detected_at_et: string } | null;
+  checklist: Checklist;
+  liquidity_note: string;
+}
+
+export interface SessionAtEntry {
+  entry_et: string;
+  exit_et: string;
+  window: SessionWindow;
+  market: { open: boolean; reason: string; early_close: boolean; calendar: string };
+  checklist: {
+    status: string; passed: number; total: number; failures: string[]; unknowns: string[]; direction: string | null;
+    regime: { label: string; efficiency_ratio_2h: number | null; vwap_crosses_today: number };
+    relative_volume: number | null; relative_volatility: string | null;
+    items: { key: string; name: string; status: CheckStatus; reason: string }[];
+  };
+  planned_reward_risk: number | null;
+  stop_reached_during_trade: boolean | null;
+  target_reached_during_trade: boolean | null;
+  bars_before_entry: number;
+  note: string;
+}

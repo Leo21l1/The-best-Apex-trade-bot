@@ -1,6 +1,6 @@
 "use client";
 
-import type { JournalResponse, ReplayData, TradeDetail } from "@apex/shared-types";
+import type { JournalResponse, ReplayData, SessionAtEntry, TradeDetail } from "@apex/shared-types";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
@@ -11,6 +11,7 @@ import { money } from "@/lib/money";
 import { entryIndex, replayView } from "@/lib/replay";
 import { AnswerBody } from "../copilot/Answer";
 import { CandleChart, type ExtraMarker, type PriceLineSpec } from "../charts/CandleChart";
+import { STATUS_MARK } from "../session/ReadinessPanel";
 
 const SEV = { high: "text-down", medium: "text-warn", low: "text-muted" };
 
@@ -141,6 +142,7 @@ function Review({ trade, onChange }: { trade: TradeDetail; onChange: (t: TradeDe
           <Stat label="Stop / target" value={<span className="whitespace-normal break-words text-base">{trade.planned_stop ?? "—"} / {trade.planned_target ?? "—"}</span>} />
         </div>
       </Panel>
+      {trade.context?.session_at_entry && <SessionAtEntryPanel s={trade.context.session_at_entry} rMultiple={trade.context.r_multiple} />}
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Automatic journal">
           <dl className="space-y-2 text-sm" data-testid="journal-sections">
@@ -313,5 +315,42 @@ function Replay({ trade }: { trade: TradeDetail }) {
         </Panel>
       </div>
     </div>
+  );
+}
+
+
+/** Objectively measured context at entry (no coaching text; computed from candles before entry). */
+function SessionAtEntryPanel({ s, rMultiple }: { s: SessionAtEntry; rMultiple: number | null }) {
+  const yn = (v: boolean | null) => (v == null ? "unknown (no bars)" : v ? "yes" : "no");
+  return (
+    <Panel title="Measured at entry (facts, not coaching)">
+      <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]" data-testid="session-at-entry">
+        <dl className="grid grid-cols-[9rem_1fr] gap-x-2 gap-y-1 text-xs">
+          <dt className="text-faint">Entry (New York)</dt><dd className="font-mono">{s.entry_et}</dd>
+          <dt className="text-faint">Exit (New York)</dt><dd className="font-mono">{s.exit_et}</dd>
+          <dt className="text-faint">Session at entry</dt><dd>{s.window.label}</dd>
+          <dt className="text-faint">Market</dt><dd>{s.market.open ? "Open" : "Closed"} · {s.market.reason}</dd>
+          <dt className="text-faint">Relative volume</dt><dd>{s.checklist.relative_volume != null ? `${s.checklist.relative_volume}×` : "unknown"}</dd>
+          <dt className="text-faint">Volatility</dt><dd>{s.checklist.relative_volatility ?? "unknown"}</dd>
+          <dt className="text-faint">Regime</dt><dd>{s.checklist.regime.label} · {s.checklist.regime.vwap_crosses_today} VWAP crosses before entry</dd>
+          <dt className="text-faint">Alignment</dt><dd>{s.checklist.direction ?? "mixed / unknown"}</dd>
+          <dt className="text-faint">Planned R:R</dt><dd>{s.planned_reward_risk ?? "no plan levels"}{rMultiple != null ? ` · actual ${rMultiple}R` : ""}</dd>
+          <dt className="text-faint">Stop reached?</dt><dd>{yn(s.stop_reached_during_trade)}</dd>
+          <dt className="text-faint">Target reached?</dt><dd>{yn(s.target_reached_during_trade)}</dd>
+        </dl>
+        <div>
+          <p className="mb-1 text-xs"><span className="font-mono font-semibold">{s.checklist.status}</span> at entry · {s.checklist.passed}/{s.checklist.total} conditions passed</p>
+          <ul className="space-y-0.5 text-[11px]">
+            {s.checklist.items.map((i) => (
+              <li key={i.key} className="flex gap-2">
+                <span className={cx("inline-flex w-[4.6rem] shrink-0 justify-center rounded border px-1 font-mono text-[10px]", STATUS_MARK[i.status].cls)}>{STATUS_MARK[i.status].sym} {i.status}</span>
+                <span><span className="text-text">{i.name}</span> <span className="text-muted">{i.reason}</span></span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-[10px] text-faint">{s.note}</p>
+        </div>
+      </div>
+    </Panel>
   );
 }

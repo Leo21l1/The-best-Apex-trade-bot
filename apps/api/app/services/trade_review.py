@@ -40,7 +40,7 @@ FLAT_BY = time(15, 55)
 class TradeData:
     trade: JournalTrade
     plan: TradePlan | None
-    bars: list[Bar]  # 1-minute bars from entry-120h to exit+8h (enough to finish the session)
+    bars: list[Bar]  # 1-minute bars from entry-16d to exit+8h (baselines + finishing the session)
     events: list[EconomicEvent]
     signal: SignalRow | None
     day_trades: list[JournalTrade]
@@ -59,7 +59,7 @@ async def load_trade_data(session: AsyncSession, trade: JournalTrade, settings: 
             session,
             provider,
             trade.symbol,
-            trade.entry_time - timedelta(hours=120),
+            trade.entry_time - timedelta(days=16),  # >= 10 prior sessions for time-of-day baselines
             trade.exit_time + timedelta(hours=8),
         )
         if provider != "none"
@@ -598,6 +598,69 @@ def plan_signal(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
+def session_review(d: TradeData, stop: float | None, target: float | None, held: list[Bar]) -> dict[str, Any]:
+    """Session, checklist and levels at ENTRY, computed only from bars completed before entry.
+
+    Facts measured here are kept apart from the coaching text. The checklist is evaluated with the
+    same pure function as the live readiness panel, "as of" the entry time (no look-ahead).
+    """
+    from app.services.checklist import evaluate
+    from app.services.readiness import config, signal_setup
+    from app.services.session_intel import session_context
+
+    t = d.trade
+    pre = [b for b in d.bars if b.ts + timedelta(minutes=1) <= t.entry_time]
+    setup = signal_setup(d.signal) if d.signal is not None else None
+    if setup is None and d.plan and isinstance((d.plan.signal_snapshot or {}).get("signal"), dict):
+        inner = d.plan.signal_snapshot["signal"]
+        setup = {
+            "strategy_id": inner.get("strategy_id"),
+            "direction": inner.get("direction"),
+            "entry": inner.get("entry"),
+            "stop": inner.get("stop"),
+            "targets": inner.get("targets"),
+        }
+    ck = evaluate(t.symbol, t.entry_time, pre, config("intraday"), setup)
+    sc = session_context(t.symbol, t.entry_time)
+    s = 1 if t.direction == "long" else -1
+    planned_rr = (
+        round(abs(target - t.entry_price) / abs(t.entry_price - stop), 2)
+        if stop is not None and target is not None and stop != t.entry_price
+        else None
+    )
+    stop_hit = target_hit = None
+    if held:
+        lo, hi = min(b.low for b in held), max(b.high for b in held)
+        if stop is not None:
+            stop_hit = (lo <= stop) if s == 1 else (hi >= stop)
+        if target is not None:
+            target_hit = (hi >= target) if s == 1 else (lo <= target)
+    return {
+        "entry_et": t.entry_time.astimezone(ET).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "exit_et": t.exit_time.astimezone(ET).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "window": sc["window"],
+        "market": {k: sc["market"][k] for k in ("open", "reason", "early_close", "calendar")},
+        "checklist": {
+            "status": ck["status"],
+            "passed": ck["passed"],
+            "total": ck["total"],
+            "failures": ck["failures"],
+            "unknowns": ck["unknowns"],
+            "direction": ck["direction"],
+            "regime": ck["regime"],
+            "relative_volume": ck["relative_volume"].get("ratio"),
+            "relative_volatility": ck["relative_volatility"].get("label"),
+            "items": [{k: i[k] for k in ("key", "name", "status", "reason")} for i in ck["items"]],
+        },
+        "planned_reward_risk": planned_rr,
+        "stop_reached_during_trade": stop_hit,
+        "target_reached_during_trade": target_hit,
+        "bars_before_entry": len(pre),
+        "note": "Computed only from candles completed before the entry time; data quality/news gates are "
+        "not re-evaluated historically.",
+    }
+
+
 def build_review(
     d: TradeData, settings: Settings, daily_loss_limit: float, max_contracts: float
 ) -> tuple[dict[str, Any], dict[str, Any], float | None, float | None]:
@@ -616,6 +679,22 @@ def build_review(
     alts = scenarios(d, commission)
     c = coach(d, ctx, news, mfe, mae, daily_loss_limit, max_contracts)
     smc = smc_review(d)
+    sess = session_review(d, stop, target, held)
+    weak = [
+        i
+        for i in sess["checklist"]["items"]
+        if i["status"] == "FAIL" and i["key"] in ("kill_zone", "not_choppy", "outside_lunch", "alignment")
+    ]
+    if weak:
+        c["findings"].append(
+            {
+                "code": "checklist_at_entry",
+                "title": f"Entered with {len(weak)} readiness condition(s) failing",
+                "evidence": "; ".join(f"{i['name']}: {i['reason']}" for i in weak),
+                "severity": "low",
+                "basis": "observed: readiness checklist evaluated on candles completed before entry",
+            }
+        )
     duration = (t.exit_time - t.entry_time).total_seconds()
     r_mult = (
         ((t.exit_price - t.entry_price) * s / abs(t.entry_price - stop)) if stop not in (None, t.entry_price) else None
@@ -640,6 +719,7 @@ def build_review(
         "news": news,
         "signal_at_entry": signal,
         "smc": smc,
+        "session_at_entry": sess,
         "plan": None
         if d.plan is None
         else {
