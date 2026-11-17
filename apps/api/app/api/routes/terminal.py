@@ -5,6 +5,7 @@ from __future__ import annotations
 import bisect
 import copy
 import json
+import logging
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -13,6 +14,7 @@ from typing import Annotated, Any, Literal
 import anthropic
 from anthropic import AsyncAnthropic
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
@@ -20,6 +22,7 @@ from app.api.deps import AdminUser, CurrentUser, SessionDep, client_ip
 from app.api.routes.copilot import get_copilot_client
 from app.core.config import get_settings
 from app.core.redis import get_redis
+from app.marketdata.calendar import ET
 from app.marketdata.instruments import INSTRUMENTS, get_instrument
 from app.marketdata.store import query_bars
 from app.marketdata.types import Timeframe
@@ -84,7 +87,7 @@ async def trade_label(session: SessionDep, symbol: str) -> dict[str, Any]:
         return {"label": "NO TRADE", "reasons": [news["summary"]], "quality": quality, "signal": None}
     if sig is not None:
         label = "BUY" if sig.direction == "long" else "SHORT"
-        reasons.append(f"{sig.strategy_id} conditions met at the {sig.bar_ts.astimezone().strftime('%H:%M')} UTC bar.")
+        reasons.append(f"{sig.strategy_id} conditions met at the {sig.bar_ts.astimezone(ET).strftime('%H:%M')} ET bar.")
         reasons.append("Strategy is NOT validated by backtests on real data; treat as a research candidate.")
         if quality == "simulated":
             reasons.append("Prices are SIMULATED.")
@@ -556,24 +559,45 @@ async def manual_trade(body: ManualTradeIn, user: AdminUser, request: Request, s
     return trade_detail(t)
 
 
+TradeId = Annotated[int, PathParam(ge=1, le=2_147_483_647, description="Journal trade id")]
+
+
 async def _trade(session: SessionDep, trade_id: int) -> JournalTrade:
     t = await session.get(JournalTrade, trade_id)
     if t is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trade not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Trade #{trade_id} not found")
     return t
 
 
-@router.get("/journal/trades/{trade_id}")
-async def get_trade(trade_id: int, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
-    t = await _trade(session, trade_id)
-    if t.review is None:
+async def _ensure_review(session: SessionDep, t: JournalTrade) -> str | None:
+    """Generate the review if missing. A failure is logged and reported, never turned into a 500:
+    the stored trade itself is always returned."""
+    if t.review is not None:
+        return None
+    trade_id = t.id  # read before a rollback expires the instance
+    try:
         await review_trade(session, t, get_settings())
         await session.commit()
-    return trade_detail(t)
+        return None
+    except Exception:  # the trade record must stay viewable even if analysis breaks
+        await session.rollback()
+        logging.getLogger("apex.trade_review").exception("trade review failed", extra={"trade_id": trade_id})
+        return "The automatic review could not be generated for this trade; the stored trade data is shown."
+
+
+@router.get("/journal/trades/{trade_id}")
+async def get_trade(trade_id: TradeId, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
+    t = await _trade(session, trade_id)
+    problem = await _ensure_review(session, t)
+    if problem:
+        t = await _trade(session, trade_id)
+    out = trade_detail(t)
+    out["review_error"] = problem
+    return out
 
 
 @router.post("/journal/trades/{trade_id}/review")
-async def regenerate_review(trade_id: int, _: AdminUser, session: SessionDep) -> dict[str, Any]:
+async def regenerate_review(trade_id: TradeId, _: AdminUser, session: SessionDep) -> dict[str, Any]:
     t = await _trade(session, trade_id)
     await review_trade(session, t, get_settings())
     await session.commit()
@@ -581,11 +605,10 @@ async def regenerate_review(trade_id: int, _: AdminUser, session: SessionDep) ->
 
 
 @router.get("/journal/trades/{trade_id}/replay")
-async def replay(trade_id: int, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
+async def replay(trade_id: TradeId, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
     t = await _trade(session, trade_id)
-    if t.review is None:
-        await review_trade(session, t, get_settings())
-        await session.commit()
+    if await _ensure_review(session, t):
+        t = await _trade(session, trade_id)
     return await replay_data(session, t, get_settings())
 
 
@@ -601,7 +624,7 @@ the data), **What was known at entry**, **Next learning objective**. Be direct a
 
 @router.post("/journal/trades/{trade_id}/ai-review")
 async def ai_review(
-    trade_id: int, user: AdminUser, session: SessionDep, c: Annotated[AsyncAnthropic, Depends(get_copilot_client)]
+    trade_id: TradeId, user: AdminUser, session: SessionDep, c: Annotated[AsyncAnthropic, Depends(get_copilot_client)]
 ) -> dict[str, Any]:
     """Narrative coaching from Claude, grounded only in the stored record (optional; needs an API key)."""
     t = await _trade(session, trade_id)

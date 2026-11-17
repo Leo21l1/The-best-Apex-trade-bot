@@ -66,6 +66,7 @@ export function TradePage() {
         <Link href="/journal" className="text-xs text-accent hover:underline">← Trading Journal</Link>
       </PageHeader>
       {error && <Callout tone="danger" title="Could not load the trade">{error}</Callout>}
+      {trade?.review_error && <div className="mb-3"><Callout tone="warn" title="Review unavailable">{trade.review_error}</Callout></div>}
       {trade && (
         <>
           <Panel>
@@ -108,7 +109,19 @@ function Review({ trade, onChange }: { trade: TradeDetail; onChange: (t: TradeDe
       setBusy(false);
     }
   };
-  if (!r) return <p className="text-sm text-faint">Generating review…</p>;
+  if (!r) {
+    if (!trade.review_error) return <p className="text-sm text-faint">Generating review…</p>;
+    return (
+      <Panel title="Trade record" className="mb-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4" data-testid="trade-record">
+          <Stat label="Net P&L" value={<span className={trade.net_pnl >= 0 ? "text-up" : "text-down"}>{money(trade.net_pnl, true)}</span>} hint={`gross ${money(trade.gross_pnl, true)}`} />
+          <Stat label="Commission" value={money(trade.fees)} />
+          <Stat label="Entry" value={`${trade.entry_price}`} hint={formatEt(trade.entry_time, true)} />
+          <Stat label="Exit" value={`${trade.exit_price}`} hint={formatEt(trade.exit_time, true)} />
+        </div>
+      </Panel>
+    );
+  }
   const J: [keyof typeof r.journal, string][] = [
     ["trade_summary", "Trade summary"], ["entry_analysis", "Entry analysis"], ["market_conditions", "Market conditions"],
     ["price_action_at_entry", "Price action at entry (5m)"], ["news_context", "News context"], ["risk_analysis", "Risk analysis"], ["execution_review", "Execution review"],
@@ -248,7 +261,7 @@ function Replay({ trade }: { trade: TradeDetail }) {
   }, [d, v]);
 
   if (!d || !v) return <p className="text-sm text-faint">Loading replay…</p>;
-  if (d.bars.length === 0) return <EmptyState title="No stored bars cover this trade">Replay needs market data for the trade&apos;s time window.</EmptyState>;
+  if (d.bars.length === 0) return <EmptyState title="Historical replay data is missing">{d.data_note ?? "Replay needs stored market data for the trade's time window."}</EmptyState>;
   const last = v.bars.at(-1)!;
   const s = d.entry.direction === "long" ? 1 : -1;
   const openPts = v.inTrade ? (last.c - d.entry.price) * s : null;

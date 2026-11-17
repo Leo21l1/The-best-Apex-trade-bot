@@ -572,6 +572,32 @@ def smc_review(d: TradeData) -> dict[str, Any]:
     }
 
 
+def plan_signal(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalise a plan's ``signal_snapshot`` to the flat signal shape used by reviews.
+
+    Terminal plans store the trade-label result ``{label, reasons, quality, signal}`` where
+    ``signal`` is None unless a strategy signal was active (label WAIT / NO TRADE). Older or
+    external snapshots may already be flat. Reading the label format as if it were flat raised
+    KeyError('strategy_id') for plans without a thesis: the Trade Review HTTP 500.
+    """
+    if not snapshot:
+        return None
+    if "strategy_id" in snapshot:
+        return snapshot
+    inner = snapshot.get("signal")
+    if not isinstance(inner, dict):
+        return None
+    return {
+        "label": snapshot.get("label"),
+        "strategy_id": inner.get("strategy_id"),
+        "entry": inner.get("entry"),
+        "stop": inner.get("stop"),
+        "targets": inner.get("targets"),
+        "detected_at": inner.get("bar_ts"),
+        "quality": snapshot.get("quality"),
+    }
+
+
 def build_review(
     d: TradeData, settings: Settings, daily_loss_limit: float, max_contracts: float
 ) -> tuple[dict[str, Any], dict[str, Any], float | None, float | None]:
@@ -594,10 +620,8 @@ def build_review(
     r_mult = (
         ((t.exit_price - t.entry_price) * s / abs(t.entry_price - stop)) if stop not in (None, t.entry_price) else None
     )
-    signal = None
-    if d.plan and d.plan.signal_snapshot:
-        signal = d.plan.signal_snapshot
-    elif d.signal is not None:
+    signal = plan_signal(d.plan.signal_snapshot) if d.plan else None
+    if signal is None and d.signal is not None:
         signal = {
             "label": "BUY" if d.signal.direction == "long" else "SHORT",
             "strategy_id": d.signal.strategy_id,
@@ -656,7 +680,8 @@ def build_review(
         "entry_analysis": (
             d.plan.thesis
             if d.plan and d.plan.thesis
-            else f"Strategy signal {signal['strategy_id']} ({signal['label']}) preceded the entry."
+            else f"Strategy signal {signal.get('strategy_id') or 'unknown'} ({signal.get('label') or '?'}) "
+            "preceded the entry."
             if signal
             else "No written thesis or matching strategy signal was recorded."
         ),
@@ -820,10 +845,27 @@ async def replay_data(session: AsyncSession, trade: JournalTrade, settings: Sett
         )
     ).all()
     ctx = trade.context or {}
+    fmt = lambda x: x.astimezone(ET).strftime("%Y-%m-%d %H:%M ET")  # noqa: E731
+    if provider == "none":
+        note = "No market-data provider is configured, so candle replay is unavailable."
+    elif not bars:
+        note = (
+            f"No stored {provider} 1-minute bars for {trade.symbol} between {fmt(start)} and {fmt(end)}: "
+            "historical replay data is missing for this trade. The trade record and review are still shown."
+        )
+    elif bars[0].ts > trade.entry_time or bars[-1].ts < trade.exit_time - timedelta(minutes=1):
+        note = (
+            f"Stored bars only partly cover the trade ({fmt(bars[0].ts)} to {fmt(bars[-1].ts)}); "
+            "replay may be incomplete."
+        )
+    else:
+        note = None
     return {
         "trade_id": trade.id,
         "symbol": trade.symbol,
         "provider": provider,
+        "data_available": bool(bars),
+        "data_note": note,
         "bars": [
             {"t": int(b.ts.timestamp()), "o": b.open, "h": b.high, "l": b.low, "c": b.close, "v": b.volume}
             for b in bars

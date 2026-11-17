@@ -874,6 +874,8 @@ export interface TradeReview {
 }
 
 export interface TradeDetail extends JournalTrade {
+  /** Set when the automatic review could not be generated; the stored trade is still returned. */
+  review_error?: string | null;
   slippage: number;
   mfe: number | null;
   mae: number | null;
@@ -899,6 +901,9 @@ export interface ReplayData {
   trade_id: number;
   symbol: string;
   provider: string;
+  data_available?: boolean;
+  /** Why replay is missing or incomplete (null when bars cover the trade). */
+  data_note?: string | null;
   bars: Bar[];
   entry: { t: number; price: number; direction: "long" | "short" };
   exit: { t: number; price: number };
