@@ -48,6 +48,12 @@ anything that has not shown out-of-sample value after costs is labelled RESEARCH
 
 Until real data is connected no strategy can be validated, so the ranked opportunity list stays empty.
 
+## Run it on Windows
+
+Install Docker Desktop, get the code, then double-click `windows\Install desktop shortcut.bat`.
+From then on the **PROJECT APEX** desktop icon starts everything and opens http://localhost:3000.
+See [windows/README.md](windows/README.md).
+
 ## Quick start (development)
 
 Requirements: Python 3.12+ with [uv](https://docs.astral.sh/uv/), Node 20.9+, PostgreSQL 16, Redis 7.
