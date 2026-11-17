@@ -24,6 +24,7 @@ from app.api.routes import (
     market,
     news,
     scanner,
+    session,
     smc,
     terminal,
     ws,
@@ -138,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(journal.router, prefix="/api")
     app.include_router(lab.router, prefix="/api")
     app.include_router(smc.router, prefix="/api")
+    app.include_router(session.router, prefix="/api")
     app.include_router(news.router, prefix="/api")
     app.include_router(integrations.router, prefix="/api")
     app.include_router(broker.router, prefix="/api")
