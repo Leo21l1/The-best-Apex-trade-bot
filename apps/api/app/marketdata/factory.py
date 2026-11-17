@@ -17,5 +17,5 @@ def build_provider(settings: Settings) -> MarketDataProvider | None:
         from app.adapters.marketdata.databento import DatabentoProvider
 
         key = settings.databento_api_key.get_secret_value() if settings.databento_api_key else ""
-        return DatabentoProvider(api_key=key)
+        return DatabentoProvider(api_key=key, roll_rule=settings.databento_roll_rule)
     raise ValueError(f"unknown market data provider {name!r}")

@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # A feed is stale when the market is open and no bar arrived for this long.
     market_data_stale_seconds: int = Field(default=150, ge=10)
     databento_api_key: SecretStr | None = None
+    #: Continuous front-month rule: v = highest previous-day volume (follows the roll traders use),
+    #: c = calendar (front until expiry), n = highest open interest.
+    databento_roll_rule: Literal["c", "v", "n"] = "v"
 
     # Scanner (Phase 3)
     scanner_interval_seconds: int = Field(default=20, ge=5, le=600)

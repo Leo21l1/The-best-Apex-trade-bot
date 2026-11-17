@@ -110,14 +110,24 @@ def test_databento_malformed_record_raises() -> None:
         parse_ohlcv_lines("not json\n", "ES", "databento")
 
 
-def _provider(handler: httpx.MockTransport) -> tuple[DatabentoProvider, list[float]]:
+def _provider(handler: httpx.MockTransport, meta: bool = True) -> tuple[DatabentoProvider, list[float]]:
+    """``meta``: answer metadata.get_dataset_range with an available end one hour after NOW."""
     sleeps: list[float] = []
 
     async def fake_sleep(s: float) -> None:
         sleeps.append(s)
 
-    client = httpx.AsyncClient(transport=handler, base_url="https://hist.databento.test")
-    return DatabentoProvider("key", client=client, min_interval_s=0, sleep=fake_sleep), sleeps
+    inner = handler
+
+    async def route(req: httpx.Request) -> httpx.Response:
+        if meta and req.url.path == "/v0/metadata.get_dataset_range":
+            return httpx.Response(
+                200, json={"start": "2010-06-06T00:00:00Z", "end": (NOW + timedelta(hours=1)).isoformat()}
+            )
+        return await inner.handle_async_request(req)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(route), base_url="https://hist.databento.test")
+    return DatabentoProvider("key", client=client, min_interval_s=0, sleep=fake_sleep, clock=lambda: NOW), sleeps
 
 
 async def test_databento_request_shape_and_success() -> None:
@@ -134,14 +144,14 @@ async def test_databento_request_shape_and_success() -> None:
     assert seen[0].url.path == "/v0/timeseries.get_range"
     assert (q["dataset"], q["symbols"], q["stype_in"], q["schema"]) == (
         "GLBX.MDP3",
-        "ES.c.0",
+        "ES.v.0",  # continuous front month by previous-day volume (default roll rule)
         "continuous",
         "ohlcv-1m",
     )
 
 
 async def test_databento_auth_error_and_http_error() -> None:
-    p, _ = _provider(httpx.MockTransport(lambda r: httpx.Response(401)))
+    p, _ = _provider(httpx.MockTransport(lambda r: httpx.Response(401)), meta=False)
     with pytest.raises(ProviderAuthError):
         await p.fetch_candles("ES", NOW - timedelta(hours=1), NOW)
     p, _ = _provider(httpx.MockTransport(lambda r: httpx.Response(500)))
@@ -151,7 +161,7 @@ async def test_databento_auth_error_and_http_error() -> None:
     def boom(req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
 
-    p, _ = _provider(httpx.MockTransport(boom))
+    p, _ = _provider(httpx.MockTransport(boom), meta=False)
     with pytest.raises(ProviderError):
         await p.fetch_candles("ES", NOW - timedelta(hours=1), NOW)
 

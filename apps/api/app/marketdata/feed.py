@@ -19,7 +19,12 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.adapters.marketdata.base import MarketDataProvider, ProviderAuthError, ProviderError
+from app.adapters.marketdata.base import (
+    MarketDataProvider,
+    ProviderAuthError,
+    ProviderError,
+    ProviderRequestError,
+)
 from app.core.logging import log_event
 from app.marketdata.store import last_bar_times, upsert_candles
 from app.marketdata.types import Candle
@@ -136,11 +141,21 @@ class IngestionService:
         async with self._sessionmaker() as s:
             last = await last_bar_times(s, self.provider.info.name)
         total = 0
+        self.backfill_errors: dict[str, str] = {}
         for symbol in self.symbols:
             start = max(floor, last[symbol] + timedelta(minutes=1)) if symbol in last else floor
+            if symbol in last:
+                self.status["last_event"].setdefault(symbol, last[symbol].isoformat())
             while start < now:
                 end = min(start + BACKFILL_CHUNK, now)
-                fetched = await self.provider.fetch_candles(symbol, start, end)
+                try:
+                    fetched = await self.provider.fetch_candles(symbol, start, end)
+                except ProviderRequestError as exc:
+                    # An invalid request will fail identically on every retry: record it, skip this
+                    # symbol's backfill and keep going (the live stream can still replay the gap).
+                    self.backfill_errors[symbol] = str(exc)
+                    log_event(log, "backfill request rejected", level=logging.ERROR, symbol=symbol, error=str(exc))
+                    break
                 good = sort_dedupe(self._accept(fetched))
                 if good:
                     async with self._sessionmaker() as s:
@@ -181,8 +196,10 @@ class IngestionService:
         while not stop.is_set():
             try:
                 await self.backfill()
-                await self._set_state("streaming")
-                async for candle in self.provider.stream_candles(self.symbols):
+                await self._set_state(
+                    "streaming", "; ".join(f"{k}: {v}" for k, v in self.backfill_errors.items()) or None
+                )
+                async for candle in self._stream():
                     attempt = 0
                     await self.handle(candle)
                     if stop.is_set():
@@ -209,6 +226,16 @@ class IngestionService:
                 await self._wait(stop, delay)
         await self._set_state("stopped")
         await self.provider.aclose()
+
+    def _stream(self) -> Any:
+        """Open the provider stream, resuming from the oldest per-symbol last bar when supported."""
+        import inspect
+
+        if "since" in inspect.signature(self.provider.stream_candles).parameters:
+            lasts = [datetime.fromisoformat(v) for k, v in self.status["last_event"].items() if k in self.symbols]
+            since = min(lasts) + timedelta(minutes=1) if lasts and len(lasts) == len(self.symbols) else None
+            return self.provider.stream_candles(self.symbols, since=since)
+        return self.provider.stream_candles(self.symbols)
 
     @staticmethod
     async def _wait(stop: asyncio.Event, seconds: float) -> None:

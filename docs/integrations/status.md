@@ -5,7 +5,7 @@ Last reviewed: 2026-11-17
 | Integration | Status | Notes |
 |---|---|---|
 | Market data: `simulated` | Working | Synthetic prices for development. Labelled SIMULATED everywhere. Never use for trading. |
-| Market data: `databento` | Adapter written, **unverified** | Historical 1-minute bars only. Not run against the live service (no API key; the build environment also blocks the host). |
+| Market data: `databento` | Historical + Live adapter, **not yet verified here** | Backfill via the historical API clamped to the published cutoff (`metadata.get_dataset_range`); current bars via the Live API with intraday replay, labelled LIVE. Verify with `python -m app.cli databento-check` in the worker container (no key in the build environment). |
 | Real-time market data | Not implemented | Needs a licensed streaming adapter (see below). |
 | Tradovate market data / read-only | Not used | See research below. |
 | Economic calendar | Working with imported files | Official `.ics` import, manual entry, optional configured ICS URLs. Not tested against a live BLS/Fed download (hosts blocked here). |
@@ -58,8 +58,9 @@ To finish real data:
    `APEX_DATABENTO_API_KEY=...`.
 2. Run the worker and confirm bars arrive and pass validation. The adapter is marked unverified
    in the UI until this has been done and the flag is changed in code.
-3. For real-time bars, add a streaming adapter (Databento's live service uses a separate
-   protocol). Until then everything from Databento is labelled HISTORICAL, not LIVE.
+3. Real-time bars use the Databento Live API (official `databento` client, TCP gateway on port
+   13000). Run `docker compose exec worker python -m app.cli databento-check` to confirm the
+   historical cutoff, capture any 422 body (redacted) and see live ES/NQ bars arrive.
 
 ## Credentials
 

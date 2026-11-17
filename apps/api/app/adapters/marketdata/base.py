@@ -18,6 +18,11 @@ class ProviderError(Exception):
     """Recoverable provider failure (network, rate limit, bad response)."""
 
 
+class ProviderRequestError(ProviderError):
+    """The request itself is invalid (HTTP 4xx other than auth/rate limit). Retrying it unchanged
+    cannot succeed, so callers must change or skip the request instead of reconnecting in a loop."""
+
+
 class ProviderAuthError(ProviderError):
     """Credentials missing or rejected. Not retried automatically."""
 
@@ -44,6 +49,9 @@ class MarketDataProvider(abc.ABC):
     @abc.abstractmethod
     def stream_candles(self, symbols: Sequence[str]) -> AsyncIterator[Candle]:
         """Yield 1-minute bar updates (in-progress and closed) until cancelled.
+
+        Providers that can replay recent history may also accept ``since`` (datetime): the stream
+        then starts from that time so there is no gap after the historical backfill.
 
         Raises ProviderError on disconnect; the ingestion service reconnects with backoff.
         """
