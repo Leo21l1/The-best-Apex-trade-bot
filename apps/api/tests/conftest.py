@@ -52,7 +52,9 @@ async def _clean_state() -> AsyncIterator[None]:
     for field in type(settings).model_fields:
         setattr(settings, field, getattr(original, field))
     async with get_engine().begin() as conn:
-        await conn.execute(text("TRUNCATE candles, audit_logs, users RESTART IDENTITY CASCADE"))
+        await conn.execute(
+            text("TRUNCATE alerts, signals, candles, audit_logs, users RESTART IDENTITY CASCADE")
+        )
     await get_redis().flushdb()
 
 
@@ -66,9 +68,7 @@ async def client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def admin_client(client: httpx.AsyncClient) -> httpx.AsyncClient:
-    r = await client.post(
-        "/api/auth/bootstrap", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD}
-    )
+    r = await client.post("/api/auth/bootstrap", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD})
     assert r.status_code == 201, r.text
     return client
 

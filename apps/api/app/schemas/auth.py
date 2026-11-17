@@ -30,9 +30,7 @@ class BootstrapRequest(BaseModel):
             ]
         )
         if classes < 3:
-            raise ValueError(
-                "Password must contain at least 3 of: lowercase, uppercase, digit, symbol"
-            )
+            raise ValueError("Password must contain at least 3 of: lowercase, uppercase, digit, symbol")
         return v
 
 

@@ -2,6 +2,7 @@
 
 import { useSession } from "@/hooks/useSession";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
+import { AlertsBell } from "./AlertsBell";
 import { Clock } from "./Clock";
 import { cx, QualityBadge, StatePill } from "@/components/ui/primitives";
 
@@ -64,6 +65,7 @@ export function TopBar({
           title={`Realtime channel: ${connection}`}
           aria-label={`Realtime channel ${connection}`}
         />
+        <AlertsBell />
         <Clock />
         {user && (
           <button

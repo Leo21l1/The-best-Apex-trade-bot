@@ -136,10 +136,12 @@ export function Overview() {
           )}
         </Panel>
 
-        <Panel title="Today's opportunities" className="lg:col-span-3">
-          <EmptyState title="No opportunities ranked">
-            The scanner and strategy engine are not active yet. Zero opportunities is a valid
-            result — the system will never manufacture a trade to fill this panel.
+        <Panel title="Opportunities" className="lg:col-span-3">
+          <EmptyState title="No ranked opportunities">
+            Nothing is ranked until a strategy passes research validation on real data. Unranked
+            research candidates are listed on the{" "}
+            <Link href="/opportunities" className="text-accent hover:underline">Opportunity Leaderboard</Link>.
+            The system never manufactures a trade to fill this panel.
           </EmptyState>
         </Panel>
 

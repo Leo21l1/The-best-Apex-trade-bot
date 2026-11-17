@@ -23,6 +23,7 @@ from app.core.logging import configure_logging, log_event
 from app.core.redis import close_redis, get_redis
 from app.marketdata.factory import build_provider
 from app.marketdata.feed import IngestionService
+from app.research.scanner import ScannerService
 from app.services.health import WORKER_HEARTBEAT_KEY
 
 log = logging.getLogger("apex.worker")
@@ -59,6 +60,7 @@ def start_ingestion(stop: asyncio.Event) -> asyncio.Task[None] | None:
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
+    scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
     while not stop.is_set():
         try:
             await heartbeat_once()
@@ -68,10 +70,11 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    if ingestion is not None:
-        await asyncio.wait({ingestion}, timeout=10)
-        if not ingestion.done():
-            ingestion.cancel()
+    tasks = {t for t in (ingestion, scanner) if t is not None}
+    await asyncio.wait(tasks, timeout=10)
+    for t in tasks:
+        if not t.done():
+            t.cancel()
     await close_redis()
     await dispose_engine()
     log_event(log, "worker stopped")

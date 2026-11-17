@@ -55,9 +55,7 @@ async def test_upsert_is_idempotent_and_applies_corrections() -> None:
         assert await upsert_candles(s, bars) == 2  # replay: no duplicates
         await upsert_candles(s, [mk(1, "5001", "5004", "5000", "5003.5", v=99)])  # correction
         # Forming bars are never persisted.
-        assert (
-            await upsert_candles(s, [mk(2, "5002", "5003", "5001", "5002", is_closed=False)]) == 0
-        )
+        assert await upsert_candles(s, [mk(2, "5002", "5003", "5001", "5002", is_closed=False)]) == 0
         await s.commit()
     assert await _count() == 2
     async with get_sessionmaker()() as s:

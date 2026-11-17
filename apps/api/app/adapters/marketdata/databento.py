@@ -96,9 +96,7 @@ class DatabentoProvider(MarketDataProvider):
     ) -> None:
         if not api_key:
             raise ProviderAuthError("APEX_DATABENTO_API_KEY is not set")
-        self._client = client or httpx.AsyncClient(
-            base_url=BASE_URL, auth=(api_key, ""), timeout=30.0
-        )
+        self._client = client or httpx.AsyncClient(base_url=BASE_URL, auth=(api_key, ""), timeout=30.0)
         self._min_interval = min_interval_s
         self._poll = poll_seconds
         self._clock = clock

@@ -2,6 +2,7 @@
 
 from app.models.audit import AuditLog
 from app.models.candle import CandleRow
+from app.models.signal import AlertRow, SignalRow
 from app.models.user import Role, User
 
-__all__ = ["AuditLog", "CandleRow", "Role", "User"]
+__all__ = ["AlertRow", "AuditLog", "CandleRow", "Role", "SignalRow", "User"]

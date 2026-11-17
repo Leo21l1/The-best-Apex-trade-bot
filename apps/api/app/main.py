@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.deps import client_ip
-from app.api.routes import auth, health, market, ws
+from app.api.routes import auth, health, market, scanner, ws
 from app.core.config import Environment, get_settings
 from app.core.db import dispose_engine
 from app.core.execution_guard import POLICY
@@ -75,9 +75,7 @@ def create_app() -> FastAPI:
         token = request_id_var.set(rid)
         start = time.perf_counter()
         try:
-            if request.url.path.startswith("/api/") and not request.url.path.startswith(
-                "/api/health"
-            ):
+            if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/health"):
                 if not await rate_limiter.hit("api", client_ip(request), s.rate_limit_per_minute):
                     return JSONResponse(
                         {"detail": "Rate limit exceeded"},
@@ -87,9 +85,7 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         except Exception:
             log.exception("unhandled error")
-            response = JSONResponse(
-                {"detail": "Internal server error", "request_id": rid}, status_code=500
-            )
+            response = JSONResponse({"detail": "Internal server error", "request_id": rid}, status_code=500)
         finally:
             request_id_var.reset(token)
         response.headers["x-request-id"] = rid
@@ -109,14 +105,13 @@ def create_app() -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
         # Do not echo submitted values (could contain passwords).
-        errors = [
-            {"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")} for e in exc.errors()
-        ]
+        errors = [{"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")} for e in exc.errors()]
         return JSONResponse({"detail": errors}, status_code=422)
 
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(market.router, prefix="/api")
+    app.include_router(scanner.router, prefix="/api")
     app.include_router(ws.router, prefix="/api")
     return app
 

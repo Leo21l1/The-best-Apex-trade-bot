@@ -88,6 +88,16 @@ class Settings(BaseSettings):
     market_data_stale_seconds: int = Field(default=150, ge=10)
     databento_api_key: SecretStr | None = None
 
+    # Scanner (Phase 3)
+    scanner_interval_seconds: int = Field(default=20, ge=5, le=600)
+    scanner_lookback_hours: int = Field(default=120, ge=24, le=24 * 14)
+    alert_cooldown_seconds: int = Field(default=900, ge=0)
+
+    # Transaction-cost ASSUMPTIONS used for estimates (not broker quotes; adjust to your plan).
+    cost_commission_per_side_standard: float = Field(default=2.50, ge=0)
+    cost_commission_per_side_micro: float = Field(default=0.60, ge=0)
+    cost_slippage_ticks_per_side: float = Field(default=1.0, ge=0)
+
     # AI (Phase 5). Optional; never sent to the browser.
     anthropic_api_key: SecretStr | None = None
 

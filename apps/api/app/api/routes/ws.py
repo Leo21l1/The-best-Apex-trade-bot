@@ -3,6 +3,7 @@
 Frames: ``{topic, seq, ts, data}``. Topics:
 
 * ``system.status`` - pushed to every client every few seconds.
+* ``alerts`` - pushed to every client when an alert is created.
 * ``candles:<SYMBOL>`` - 1-minute bar updates relayed from the ingestion worker (Redis
   pub/sub). Clients opt in with ``{"type": "subscribe", "topics": ["candles:ES"]}`` and
   leave with ``{"type": "unsubscribe", ...}``.
@@ -28,6 +29,7 @@ from app.core.db import get_sessionmaker
 from app.core.redis import get_redis
 from app.marketdata.feed import CANDLE_CHANNEL
 from app.marketdata.instruments import get_instrument
+from app.services.alerts import ALERT_CHANNEL
 from app.services.health import system_status
 
 router = APIRouter()
@@ -89,13 +91,16 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         while True:
             pubsub = get_redis().pubsub()
             try:
-                await pubsub.subscribe(CANDLE_CHANNEL)
+                await pubsub.subscribe(CANDLE_CHANNEL, ALERT_CHANNEL)
                 while True:
                     msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
                     if msg is None:
                         continue
                     try:
                         data = json.loads(msg["data"])
+                        if msg["channel"] == ALERT_CHANNEL:
+                            await send("alerts", data)  # alerts go to every client
+                            continue
                         topic = f"candles:{data['symbol']}"
                     except (ValueError, KeyError, TypeError):
                         continue

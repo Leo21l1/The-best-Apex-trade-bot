@@ -13,6 +13,8 @@ class InstrumentOut(BaseModel):
     exchange: str
     asset_class: str
     tick_size: float
+    tick_value: float
+    point_value: float
     is_micro: bool
     sibling: str
 

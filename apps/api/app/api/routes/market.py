@@ -59,9 +59,7 @@ async def _active() -> tuple[str | None, DataQuality, dict | None]:
     if reporting and doc is not None:
         return s.market_data_provider, DataQuality(doc["quality"]), doc
     # Worker not reporting: stored bars may still be shown, but only as history.
-    quality = (
-        DataQuality.SIMULATED if s.market_data_provider == "simulated" else DataQuality.HISTORICAL
-    )
+    quality = DataQuality.SIMULATED if s.market_data_provider == "simulated" else DataQuality.HISTORICAL
     return s.market_data_provider, quality, None
 
 
@@ -74,6 +72,8 @@ async def instruments(_: CurrentUser) -> list[InstrumentOut]:
             exchange=i.exchange,
             asset_class=i.asset_class,
             tick_size=float(i.tick_size),
+            tick_value=float(i.tick_value),
+            point_value=float(i.point_value),
             is_micro=i.is_micro,
             sibling=i.sibling,
         )
@@ -94,9 +94,7 @@ async def candles(
     now = datetime.now(UTC)
     provider, quality, doc = await _active()
     if provider is None:
-        return CandlesOut(
-            symbol=sym, timeframe=timeframe.value, provenance=_unavailable(now), bars=[]
-        )
+        return CandlesOut(symbol=sym, timeframe=timeframe.value, provenance=_unavailable(now), bars=[])
     if before is not None and before.tzinfo is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "before must include a timezone")
     bars = await query_bars(
@@ -165,9 +163,7 @@ async def snapshot(_: CurrentUser, session: SessionDep) -> SnapshotOut:
         )
     note = None if doc else "Ingestion worker is not reporting; values are last stored bars."
     return SnapshotOut(
-        provenance=Provenance(
-            provider=provider, quality=quality, as_of=now, stale=doc is None, note=note
-        ),
+        provenance=Provenance(provider=provider, quality=quality, as_of=now, stale=doc is None, note=note),
         items=items,
     )
 
@@ -181,9 +177,7 @@ async def feed_status(_: CurrentUser, session: SessionDep) -> FeedStatusOut:
     symbols = []
     for sym in s.market_data_symbols:
         # Prefer the live feed's view; fall back to what is stored.
-        iso = (doc or {}).get("last_event", {}).get(sym) or (
-            last[sym].isoformat() if sym in last else None
-        )
+        iso = (doc or {}).get("last_event", {}).get(sym) or (last[sym].isoformat() if sym in last else None)
         f = symbol_freshness(iso, now, s.market_data_stale_seconds)
         not_reporting = provider is not None and not doc
         symbols.append(

@@ -30,9 +30,7 @@ async def read_feed_status() -> dict[str, Any] | None:
     return doc if isinstance(doc, dict) else None
 
 
-def symbol_freshness(
-    last_event_iso: str | None, now: datetime, stale_seconds: int
-) -> dict[str, Any]:
+def symbol_freshness(last_event_iso: str | None, now: datetime, stale_seconds: int) -> dict[str, Any]:
     """Age of the newest bar for a symbol. A bar opening at T covers [T, T+60s)."""
     if not last_event_iso:
         return {"last_bar": None, "age_seconds": None, "stale": True}

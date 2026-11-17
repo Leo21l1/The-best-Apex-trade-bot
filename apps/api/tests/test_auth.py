@@ -13,9 +13,7 @@ from tests.conftest import ADMIN_EMAIL, CSRF, STRONG_PASSWORD
 async def test_bootstrap_status_then_first_admin(client: httpx.AsyncClient) -> None:
     r = await client.get("/api/auth/bootstrap-status")
     assert r.json() == {"needs_bootstrap": True, "bootstrap_token_required": False}
-    r = await client.post(
-        "/api/auth/bootstrap", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD}
-    )
+    r = await client.post("/api/auth/bootstrap", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD})
     assert r.status_code == 201
     assert r.json()["user"]["role"] == "admin"
     cookie = r.headers["set-cookie"].lower()
@@ -31,9 +29,7 @@ async def test_bootstrap_only_once(admin_client: httpx.AsyncClient) -> None:
 
 
 async def test_bootstrap_rejects_weak_password_without_echo(client: httpx.AsyncClient) -> None:
-    r = await client.post(
-        "/api/auth/bootstrap", json={"email": ADMIN_EMAIL, "password": "alllowercase123"}
-    )
+    r = await client.post("/api/auth/bootstrap", json={"email": ADMIN_EMAIL, "password": "alllowercase123"})
     assert r.status_code == 422
     assert "alllowercase123" not in r.text
 
@@ -72,9 +68,7 @@ async def test_login_me_logout_revokes_token(admin_client: httpx.AsyncClient) ->
 async def test_bad_password_and_unknown_user_same_response(
     admin_client: httpx.AsyncClient,
 ) -> None:
-    a = await admin_client.post(
-        "/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"}
-    )
+    a = await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"})
     b = await admin_client.post(
         "/api/auth/login", json={"email": "nobody@example.com", "password": "wrong-password"}
     )
@@ -88,9 +82,7 @@ async def test_lockout_after_repeated_failures(admin_client: httpx.AsyncClient) 
             "/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"}
         )
         assert r.status_code == 401
-    r = await admin_client.post(
-        "/api/auth/login", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD}
-    )
+    r = await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD})
     assert r.status_code == 423
 
 
@@ -98,9 +90,7 @@ async def test_auth_rate_limit(client: httpx.AsyncClient) -> None:
     get_settings().auth_rate_limit_per_minute = 3
     codes = [
         (
-            await client.post(
-                "/api/auth/login", json={"email": "x@example.com", "password": "nope"}
-            )
+            await client.post("/api/auth/login", json={"email": "x@example.com", "password": "nope"})
         ).status_code
         for _ in range(5)
     ]
@@ -135,9 +125,7 @@ async def test_tampered_and_foreign_tokens_rejected(admin_client: httpx.AsyncCli
 async def test_audit_log_records_auth_events_without_secrets(
     admin_client: httpx.AsyncClient,
 ) -> None:
-    await admin_client.post(
-        "/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"}
-    )
+    await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"})
     async with get_sessionmaker()() as s:
         rows = (await s.scalars(select(AuditLog).order_by(AuditLog.id))).all()
     actions = [(r.action, r.outcome) for r in rows]

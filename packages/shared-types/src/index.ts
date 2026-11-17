@@ -66,6 +66,8 @@ export interface Instrument {
   exchange: string;
   asset_class: string;
   tick_size: number;
+  tick_value: number;
+  point_value: number;
   is_micro: boolean;
   sibling: string;
 }
@@ -153,4 +155,154 @@ export interface LiveCandle extends Bar {
   closed: boolean;
   provider: string;
   quality: DataQuality;
+}
+
+// ---- Phase 3: scanner, opportunities, strategies, alerts ---------------------------------
+
+export interface Condition {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+export interface RadarTimeframe {
+  timeframe: Timeframe;
+  bars: number;
+  trend: "up" | "down" | "flat" | null;
+  rsi: number | null;
+  atr_pct: number | null;
+  rel_volume: number | null;
+  close: number | null;
+  note: string | null;
+}
+
+export interface StrategyCheck {
+  strategy_id: string;
+  triggered: boolean;
+  side: "long" | "short" | null;
+  note: string | null;
+  passed: number;
+  total: number;
+  conditions: Condition[];
+}
+
+export interface Levels {
+  prior_day_high: number | null;
+  prior_day_low: number | null;
+  prior_day_close: number | null;
+  overnight_high: number | null;
+  overnight_low: number | null;
+  opening_range_high: number | null;
+  opening_range_low: number | null;
+  opening_range_complete: boolean;
+}
+
+export interface RadarSymbol {
+  symbol: string;
+  last: number | null;
+  last_bar: string | null;
+  regime: "trend_up" | "trend_down" | "range" | "mixed" | "unknown";
+  regime_definition: string;
+  session: "regular" | "overnight" | "closed";
+  vwap: number | null;
+  vs_vwap: "above" | "below" | null;
+  levels: Levels;
+  timeframes: RadarTimeframe[];
+  evaluations: StrategyCheck[];
+}
+
+export interface RadarResponse {
+  as_of: string;
+  provider: string | null;
+  quality: DataQuality;
+  market_open: boolean | null;
+  symbols: RadarSymbol[];
+  note: string | null;
+}
+
+export interface ScorePart {
+  name: string;
+  points: number;
+  max: number;
+  detail: string;
+}
+
+export interface Opportunity {
+  id: number;
+  status: "active" | "invalidated" | "target_reached" | "expired";
+  created_at: string;
+  strategy_id: string;
+  symbol: string;
+  direction: "long" | "short";
+  bar_ts: string;
+  data_ts: string;
+  provider: string;
+  quality: DataQuality;
+  entry: number;
+  entry_low: number;
+  entry_high: number;
+  stop: number;
+  targets: number[];
+  reward_risk: number;
+  risk_per_contract: number;
+  estimated_cost_per_contract: number;
+  loss_at_stop_after_costs: number;
+  score: number;
+  score_breakdown: ScorePart[];
+  conditions: Condition[];
+  validation: { validated: boolean; reason: string; sample_size: number | null; expectancy_r: number | null };
+  news_exposure: string;
+  risk_eligibility: string;
+  uncertainty: string[];
+  rank_eligible: boolean;
+  rank_blockers: string[];
+}
+
+export interface OpportunitiesResponse {
+  as_of: string;
+  provider: string | null;
+  quality: DataQuality;
+  ranked: Opportunity[];
+  candidates: Opportunity[];
+  score_note: string;
+  ranking_rule: string;
+}
+
+export interface StrategySpec {
+  id: string;
+  code: string;
+  name: string;
+  timeframe: string;
+  required_data: string;
+  eligible_instruments: string[];
+  regime: string;
+  entry: string;
+  invalidation: string;
+  stop: string;
+  targets: string;
+  time_exit: string;
+  testing: string;
+  costs: string;
+  validation: { validated: boolean; reason: string; sample_size: number | null };
+}
+
+export interface StrategiesResponse {
+  strategies: StrategySpec[];
+  validation_standards: Record<string, number | boolean>;
+}
+
+export interface Alert {
+  id: number;
+  created_at: string;
+  kind: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  body: string;
+  symbol: string | null;
+  read: boolean;
+}
+
+export interface AlertsResponse {
+  unread: number;
+  alerts: Alert[];
 }

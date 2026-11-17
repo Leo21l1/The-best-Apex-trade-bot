@@ -32,9 +32,7 @@ async def create_admin(email: str, password: str) -> int:
         if await s.scalar(select(User).where(User.email == email.lower())):
             print("User already exists", file=sys.stderr)
             return 1
-        user = User(
-            email=email.lower(), password_hash=hash_password(password), role=Role.ADMIN.value
-        )
+        user = User(email=email.lower(), password_hash=hash_password(password), role=Role.ADMIN.value)
         s.add(user)
         await s.flush()
         await record_audit(s, action="cli.create_admin", outcome="success", actor_id=user.id)
@@ -48,7 +46,9 @@ async def reset_db() -> int:
         print("Refusing to reset a production database", file=sys.stderr)
         return 1
     async with get_engine().begin() as conn:
-        await conn.execute(text("TRUNCATE candles, audit_logs, users RESTART IDENTITY CASCADE"))
+        await conn.execute(
+            text("TRUNCATE alerts, signals, candles, audit_logs, users RESTART IDENTITY CASCADE")
+        )
     print("Database tables truncated")
     return 0
 

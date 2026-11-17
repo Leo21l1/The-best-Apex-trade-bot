@@ -73,8 +73,6 @@ AdminUser = Annotated[User, Depends(require_admin)]
 
 
 async def auth_rate_limit(request: Request) -> None:
-    allowed = await rate_limiter.hit(
-        "auth", client_ip(request), get_settings().auth_rate_limit_per_minute
-    )
+    allowed = await rate_limiter.hit("auth", client_ip(request), get_settings().auth_rate_limit_per_minute)
     if not allowed:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many authentication attempts")

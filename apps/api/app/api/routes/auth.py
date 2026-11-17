@@ -65,9 +65,7 @@ async def bootstrap(
     if _bootstrap_token_required():
         expected = s.bootstrap_token.get_secret_value() if s.bootstrap_token else ""
         if not expected or not hmac.compare_digest(expected, body.bootstrap_token or ""):
-            await record_audit(
-                session, action="auth.bootstrap", outcome="denied", ip=client_ip(request)
-            )
+            await record_audit(session, action="auth.bootstrap", outcome="denied", ip=client_ip(request))
             await session.commit()
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid bootstrap token")
     user = User(
@@ -88,9 +86,7 @@ async def bootstrap(
 
 
 @router.post("/login", response_model=SessionOut, dependencies=[Depends(auth_rate_limit)])
-async def login(
-    body: Credentials, request: Request, response: Response, session: SessionDep
-) -> SessionOut:
+async def login(body: Credentials, request: Request, response: Response, session: SessionDep) -> SessionOut:
     s = get_settings()
     ip = client_ip(request)
     user = await session.scalar(select(User).where(User.email == body.email.lower()))
@@ -146,9 +142,7 @@ async def login(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    user: CurrentUser, request: Request, response: Response, session: SessionDep
-) -> Response:
+async def logout(user: CurrentUser, request: Request, response: Response, session: SessionDep) -> Response:
     # Revoke every outstanding token for this user.
     user.token_version += 1
     await record_audit(

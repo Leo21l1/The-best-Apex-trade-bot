@@ -28,7 +28,7 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page.getByTestId("last-ES")).toHaveText(/^\d{1,3}(,\d{3})*\.\d{2}$/, {
       timeout: 30_000,
     });
-    await expect(page.getByText("No opportunities ranked")).toBeVisible();
+    await expect(page.getByText("No ranked opportunities")).toBeVisible();
   });
 
   test("sign-in, keyboard navigation, live system health, sign-out", async ({ page }) => {

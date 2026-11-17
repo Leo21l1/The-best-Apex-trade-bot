@@ -46,7 +46,5 @@ def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-def log_event(
-    logger: logging.Logger, msg: str, level: int = logging.INFO, **fields: object
-) -> None:
+def log_event(logger: logging.Logger, msg: str, level: int = logging.INFO, **fields: object) -> None:
     logger.log(level, msg, extra={"extra_fields": fields})
