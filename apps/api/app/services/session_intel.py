@@ -31,15 +31,16 @@ from app.research.bars import Bar
 # --- configuration ------------------------------------------------------------------------------
 
 DEFAULT_WINDOWS: tuple[tuple[str, str, time, time], ...] = (
-    ("premarket", "Premarket / preparation", time(6, 0), time(9, 30)),
-    ("cash_open", "US cash market opening window", time(9, 30), time(10, 30)),
+    ("premarket", "New York premarket / preparation", time(6, 0), time(9, 30)),
+    ("cash_open", "New York opening session", time(9, 30), time(10, 30)),
     ("morning", "Morning continuation", time(10, 30), time(11, 30)),
     ("lunch", "Typical midday / lunch window", time(11, 30), time(13, 30)),
     ("afternoon", "Afternoon session", time(13, 30), time(15, 0)),
-    ("cash_close", "Cash market closing window", time(15, 0), time(16, 0)),
+    ("cash_close", "Closing period", time(15, 0), time(16, 0)),
     ("post_close", "Post-cash-close futures trading", time(16, 0), time(17, 0)),
     ("maintenance", "Typical CME daily maintenance break", time(17, 0), time(18, 0)),
-    ("overnight", "Overnight futures session", time(18, 0), time(6, 0)),  # wraps midnight
+    ("overnight", "Overnight / Asia session", time(18, 0), time(2, 0)),  # wraps midnight
+    ("london", "London session", time(2, 0), time(6, 0)),
 )
 
 CALENDAR_BY_CLASS = {"equity_index": "CME_Equity", "energy": "CMEGlobex_Energy", "metals": "CMEGlobex_Metals"}
@@ -49,7 +50,9 @@ CALENDAR_BY_CLASS = {"equity_index": "CME_Equity", "energy": "CMEGlobex_Energy",
 class SessionConfig:
     windows: tuple[tuple[str, str, time, time], ...] = DEFAULT_WINDOWS
     #: Previous trading days used for time-of-day volume/volatility baselines.
-    baseline_days: int = 10
+    baseline_days: int = 20
+    #: Fewer comparable sessions than this -> the baseline is not computed (never a guessed PASS).
+    min_sessions: int = 5
     #: Minutes in the "current" comparison window.
     window_minutes: int = 15
     #: Data older than this while the market is open is STALE.
@@ -166,58 +169,65 @@ def next_transition(now: datetime, cfg: SessionConfig = SessionConfig()) -> dict
 # --- market metrics (time-of-day normalised) ----------------------------------------------------
 
 
-def _clock_window_volume(bars: Sequence[Bar], day: date, start: time, end: time) -> tuple[int, int]:
-    """(volume, bars) of 1m bars whose NY clock time is in [start, end) on trade date ``day``."""
-    vol = n = 0
+def _window_by_day(bars: Sequence[Bar], start: time, end: time) -> dict[date, list[Bar]]:
+    """1m bars whose New York clock time is in [start, end), grouped by trade date (one pass)."""
+    out: dict[date, list[Bar]] = {}
     for b in bars:
-        loc = b.ts.astimezone(ET)
-        if trading_day(b.ts) == day and start <= loc.time() < end:
-            vol += b.volume
-            n += 1
-    return vol, n
+        t = b.ts.astimezone(ET).time()
+        if start <= t < end:
+            out.setdefault(trading_day(b.ts), []).append(b)
+    return out
+
+
+def _sample_quality(n: int) -> str:
+    return "robust" if n >= 20 else "preliminary"
 
 
 def relative_volume(bars: Sequence[Bar], now: datetime, cfg: SessionConfig = SessionConfig()) -> dict[str, Any]:
     """Volume of the last ``window_minutes`` completed minutes vs the same NY clock window on the
-    previous ``baseline_days`` trade dates that had bars in that window."""
+    previous ``baseline_days`` trade dates that had bars in that window (median)."""
     end_local = now.astimezone(ET).replace(second=0, microsecond=0)
     start_local = end_local - timedelta(minutes=cfg.window_minutes)
     if start_local.date() != end_local.date():
         return {"available": False, "reason": "Comparison window spans midnight; not computed."}
     s_t, e_t = start_local.time(), end_local.time()
     today = trading_day(now)
-    cur_vol, cur_n = _clock_window_volume(bars, today, s_t, e_t)
-    days = sorted({trading_day(b.ts) for b in bars if trading_day(b.ts) < today}, reverse=True)
-    ref = []
-    for d in days:
-        v, n = _clock_window_volume(bars, d, s_t, e_t)
-        if n:
-            ref.append(v)
-        if len(ref) >= cfg.baseline_days:
-            break
-    if cur_n == 0:
-        return {"available": False, "reason": "No completed bars in the current window."}
-    if len(ref) < 3:
+    grouped = _window_by_day([b for b in bars if b.ts < now], s_t, e_t)
+    cur = grouped.get(today, [])
+    ref = [sum(b.volume for b in grouped[d]) for d in sorted((d for d in grouped if d < today), reverse=True)][
+        : cfg.baseline_days
+    ]
+    cur_vol = sum(b.volume for b in cur)
+    if not cur:
         return {
             "available": False,
-            "reason": f"Only {len(ref)} comparable prior sessions; need at least 3.",
+            "reason": "No completed bars in the current window.",
+            "reference_sessions": len(ref),
+        }
+    if len(ref) < cfg.min_sessions:
+        return {
+            "available": False,
+            "reason": f"Only {len(ref)} comparable prior sessions for {s_t:%H:%M}-{e_t:%H:%M} ET; "
+            f"need at least {cfg.min_sessions} (backfill history to improve).",
             "current_volume": cur_vol,
+            "reference_sessions": len(ref),
+            "data_quality": "insufficient",
         }
     base = median(ref)
-    # Acceleration: last 5 minutes vs the average 5-minute volume of the rest of the window.
-    last5 = sum(b.volume for b in bars if end_local - timedelta(minutes=5) <= b.ts.astimezone(ET) < end_local)
-    rest = cur_vol - last5
-    rest_per5 = rest / max(cfg.window_minutes / 5 - 1, 1)
+    last5 = sum(b.volume for b in cur if b.ts.astimezone(ET) >= end_local - timedelta(minutes=5))
+    rest_per5 = (cur_vol - last5) / max(cfg.window_minutes / 5 - 1, 1)
     return {
         "available": True,
         "window_et": f"{s_t:%H:%M}-{e_t:%H:%M}",
         "current_volume": cur_vol,
         "reference_volume": round(base, 1),
+        "reference_mean": round(sum(ref) / len(ref), 1),
         "reference_sessions": len(ref),
+        "data_quality": _sample_quality(len(ref)),
         "ratio": round(cur_vol / base, 2) if base > 0 else None,
         "acceleration": round(last5 / rest_per5, 2) if rest_per5 > 0 else None,
         "method": f"Median volume of the same {cfg.window_minutes}-minute New York clock window on the previous "
-        f"{len(ref)} sessions.",
+        f"{len(ref)} sessions (overnight and regular hours are never mixed: the window is the same clock time).",
     }
 
 
@@ -227,28 +237,34 @@ def relative_volatility(bars: Sequence[Bar], now: datetime, cfg: SessionConfig =
     start_local = end_local - timedelta(minutes=cfg.window_minutes)
     if start_local.date() != end_local.date():
         return {"available": False, "reason": "Comparison window spans midnight; not computed."}
-    s_t, e_t = start_local.time(), end_local.time()
     today = trading_day(now)
+    grouped = _window_by_day([b for b in bars if b.ts < now], start_local.time(), end_local.time())
 
-    def avg_range(d: date) -> float | None:
-        r = [b.high - b.low for b in bars if trading_day(b.ts) == d and s_t <= b.ts.astimezone(ET).time() < e_t]
-        return sum(r) / len(r) if r else None
+    def avg_range(rows: list[Bar]) -> float:
+        return sum(b.high - b.low for b in rows) / len(rows)
 
-    cur = avg_range(today)
-    days = sorted({trading_day(b.ts) for b in bars if trading_day(b.ts) < today}, reverse=True)
-    ref = [x for x in (avg_range(d) for d in days[: cfg.baseline_days * 2]) if x is not None][: cfg.baseline_days]
-    if cur is None or len(ref) < 3:
-        return {"available": False, "reason": "Not enough comparable bars."}
+    cur = grouped.get(today)
+    ref = [avg_range(grouped[d]) for d in sorted((d for d in grouped if d < today), reverse=True)][: cfg.baseline_days]
+    if not cur or len(ref) < cfg.min_sessions:
+        return {
+            "available": False,
+            "reference_sessions": len(ref),
+            "reason": f"Not enough comparable sessions ({len(ref)}; need {cfg.min_sessions}).",
+        }
     base = median(ref)
-    ratio = cur / base if base > 0 else None
+    c = avg_range(cur)
+    ratio = c / base if base > 0 else None
+    pct = round(100 * sum(1 for x in ref if x <= c) / len(ref)) if ref else None
     label = "unknown" if ratio is None else "low" if ratio < 0.7 else "high" if ratio > 1.4 else "normal"
     return {
         "available": True,
-        "current_avg_range": round(cur, 4),
+        "current_avg_range": round(c, 4),
         "reference_avg_range": round(base, 4),
         "ratio": round(ratio, 2) if ratio else None,
+        "percentile": pct,
         "label": label,
         "reference_sessions": len(ref),
+        "data_quality": _sample_quality(len(ref)),
     }
 
 

@@ -1127,3 +1127,121 @@ export interface SessionAtEntry {
   bars_before_entry: number;
   note: string;
 }
+
+/* --- Live Trade Entry Confirmation ------------------------------------------------------------ */
+export type ConfirmationState = "LONG READY" | "SHORT READY" | "WAIT" | "NO TRADE" | "DATA UNAVAILABLE";
+export interface ConfirmationCondition {
+  key: string;
+  name: string;
+  status: CheckStatus;
+  reason: string;
+  evidence: Record<string, unknown>;
+  mandatory: boolean;
+  confirm?: string;
+}
+export interface ConfirmationLevels {
+  direction: "long" | "short";
+  entry_zone: [number, number];
+  entry: number;
+  entry_with_slippage: number;
+  trigger: string;
+  stop: number;
+  t1: number;
+  t2: number | null;
+  extended_target: number | null;
+  extended_basis: string | null;
+  stop_points: number;
+  stop_ticks: number;
+  loss_per_contract: number | null;
+  reward_per_contract_t1: number | null;
+  reward_per_contract_t2: number | null;
+  rr_t1: number | null;
+  rr_t2: number | null;
+  point_value: number;
+  tick_size: number;
+  costs_per_contract: number | null;
+  invalidation_price: number;
+  expires_at: string | null;
+  basis: string;
+}
+export interface EligibleWindow { start: string; start_et: string; end_et: string; date: string; in_minutes?: number; now: boolean }
+export interface EntryConfirmation {
+  symbol: string;
+  contract?: string | null;
+  provider?: string;
+  state: ConfirmationState;
+  summary: string;
+  strategy_id: string | null;
+  direction: "long" | "short" | null;
+  data_class: string;
+  data_timestamp: string | null;
+  as_of: string;
+  ny_time: string;
+  conditions: ConfirmationCondition[];
+  mandatory: string[];
+  passed: number;
+  total: number;
+  missing: { key: string; name: string; status: CheckStatus; reason: string; would_confirm?: string | null }[];
+  levels: ConfirmationLevels | null;
+  max_size: number | null;
+  apex_compliance: string;
+  news_status: string | null;
+  next_eligible_window: EligibleWindow | null;
+  regime: { labels: string[]; evidence?: Record<string, unknown> } | null;
+  expires_at: string | null;
+  disclaimer: string;
+}
+
+/* --- Data readiness / backfill ---------------------------------------------------------------- */
+export interface SymbolCoverage {
+  symbol: string;
+  provider: string | null;
+  status?: string;
+  reason?: string;
+  target_sessions?: number;
+  sessions_stored?: number;
+  sessions_expected?: number;
+  missing_sessions?: string[];
+  earliest_bar?: string | null;
+  latest_bar?: string | null;
+  bars_total?: number;
+  relative_volume_readiness?: string;
+  volatility_readiness?: string;
+  backtest_readiness?: string;
+  rule?: string;
+}
+export interface BackfillJob {
+  id: string;
+  symbols: string[];
+  target: number;
+  status: string;
+  approved_cost_usd: number | null;
+  created_at: string;
+  updated_at?: string;
+  finished_at?: string;
+  progress: Record<string, { fetched_sessions?: number; bars?: number; remaining?: number; sessions_stored?: number }>;
+  errors: string[];
+}
+export interface DataReadiness {
+  live_provider: string | null;
+  historical_provider: string | null;
+  live_feed: {
+    state: string;
+    class: string;
+    last_error?: string | null;
+    provider_last_error?: string | null;
+    reconnects?: number | null;
+    last_event: Record<string, string>;
+    contracts: Record<string, { contract: string; rule: string; since: string }>;
+  };
+  symbols: SymbolCoverage[];
+  backfill_job: BackfillJob | null;
+  labels: string;
+}
+export interface BackfillEstimate {
+  provider: string;
+  target_sessions: number;
+  items: { symbol: string; missing_sessions: string[]; sessions_stored: number | null; estimated_cost_usd: number | null; note: string | null }[];
+  estimated_cost_usd: number | null;
+  note: string;
+}

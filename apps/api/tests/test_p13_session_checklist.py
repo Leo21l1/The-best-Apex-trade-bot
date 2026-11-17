@@ -39,7 +39,8 @@ def et(y: int, mo: int, d: int, h: int, mi: int = 0) -> datetime:
         (et(2026, 11, 17, 16, 30), "post_close"),
         (et(2026, 11, 17, 17, 30), "maintenance"),
         (et(2026, 11, 17, 20, 0), "overnight"),
-        (et(2026, 11, 18, 2, 0), "overnight"),
+        (et(2026, 11, 18, 1, 0), "overnight"),
+        (et(2026, 11, 18, 3, 0), "london"),
     ],
 )
 def test_reference_windows(ts: datetime, key: str) -> None:
@@ -51,13 +52,15 @@ def test_new_york_time_follows_dst_not_a_fixed_offset() -> None:
     winter = session_context("ES", datetime(2026, 11, 17, 14, 45, tzinfo=UTC))  # 09:45 EST
     assert summer["window"]["key"] == winter["window"]["key"] == "cash_open"
     assert summer["ny_offset"] == "-0400" and winter["ny_offset"] == "-0500"
-    # Spring forward (2026-03-08 02:00 -> 03:00): from 01:30 EST the next boundary is 06:00 EDT,
-    # which is only 3.5 elapsed hours later.
+    # Spring forward (2026-03-08: 02:00 EST jumps to 03:00 EDT). The London boundary at 02:00 does not
+    # exist that night, so from 01:30 EST the next boundary is 03:00 EDT: 30 elapsed minutes.
     nt = next_transition(et(2026, 3, 8, 1, 30))
-    assert nt["at_et"] == "06:00" and nt["in_minutes"] == 210
-    # Fall back (2026-11-01): 01:30 EDT -> 06:00 EST is 5.5 elapsed hours.
+    assert nt["at_et"] == "03:00" and nt["in_minutes"] == 30
+    # Later that morning, 04:00 EDT -> 06:00 EDT premarket is 120 elapsed minutes.
+    assert next_transition(et(2026, 3, 8, 4, 0))["in_minutes"] == 120
+    # Fall back (2026-11-01): 01:30 EDT (05:30 UTC) -> 02:00 EST (07:00 UTC) is 90 elapsed minutes.
     nt = next_transition(datetime(2026, 11, 1, 5, 30, tzinfo=UTC))
-    assert nt["at_et"] == "06:00" and nt["in_minutes"] == 330
+    assert nt["at_et"] == "02:00" and nt["in_minutes"] == 90
 
 
 def test_cme_holidays_early_closes_and_maintenance() -> None:
@@ -101,10 +104,11 @@ def test_relative_volume_is_time_of_day_normalised() -> None:
     rv = relative_volume(sorted(bars, key=lambda b: b.ts), now)
     assert rv["available"] and rv["current_volume"] == 3000 and rv["reference_volume"] == 1500
     assert rv["ratio"] == 2.0 and rv["reference_sessions"] == 10 and rv["window_et"] == "09:45-10:00"
+    assert rv["data_quality"] == "preliminary"  # robust needs 20 sessions
     short = relative_volume(
         history(PRIOR[:2], time(9, 45), 15, 100) + history([date(2026, 11, 17)], time(9, 45), 15, 1), now
     )
-    assert short["available"] is False and "need at least 3" in short["reason"]
+    assert short["available"] is False and "need at least 5" in short["reason"] and short["reference_sessions"] == 2
 
 
 def test_vwap_crosses_ignore_flicker_and_reset_each_session() -> None:

@@ -249,9 +249,25 @@ async def test_backtest_on_too_little_data_fails_cleanly(admin_client: httpx.Asy
         },
         headers=CSRF,
     )
+    # The API now refuses up front, with the stored-bar count, instead of queueing a doomed run ...
+    assert r.status_code == 409 and "stored 1-minute" in r.json()["detail"]
+    # ... and a run that reaches the worker anyway still fails cleanly with a reason.
+    async with get_sessionmaker()() as s:
+        s.add(
+            BacktestRun(
+                status="queued",
+                strategy_id="vwap_trend",
+                symbol="ES",
+                provider="simulated",
+                start=now - timedelta(hours=10),
+                end=now,
+                params={"strategy_id": "vwap_trend", "symbol": "ES"},
+            )
+        )
+        await s.commit()
     async with get_sessionmaker()() as s:
         run = await claim_next(s)
-        assert run is not None and run.id == r.json()["id"]
+        assert run is not None
     await execute_run(get_sessionmaker(), run.id, "simulated")
     async with get_sessionmaker()() as s:
         row = await s.get(BacktestRun, run.id)

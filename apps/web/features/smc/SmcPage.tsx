@@ -11,6 +11,7 @@ import { patternShapes } from "@/lib/smc";
 import { CandleChart, type OverlayToggles } from "../charts/CandleChart";
 import { NewsMarkerList, NewsPanel, OverlayToggleBar, useOverlays } from "../charts/overlayParts";
 import { useCandles } from "../charts/useCandles";
+import { EntryConfirmationPanel } from "../session/EntryConfirmation";
 import { ReadinessPanel } from "../session/ReadinessPanel";
 import { ConfluencePanel, LiquidityMapPanel, PatternInspector, PatternList, SmcToggleBar, useConfluence, useSmc, useSmcSettings } from "./parts";
 
@@ -82,6 +83,7 @@ export function SmcPage() {
           </Panel>
           {selected && <PatternInspector p={selected} analysis={analysis} onClose={() => setSelected(null)} />}
           <CollapsiblePanel id="smc-confluence" title="Multi-timeframe confluence"><ConfluencePanel c={conf} /></CollapsiblePanel>
+          <EntryConfirmationPanel symbol={symbol} refreshKey={bars.length ? bars[bars.length - 1]!.t : null} />
         </>} right={<>
           <ReadinessPanel symbol={symbol} refreshKey={bars.length ? bars[bars.length - 1]!.t : null} />
           <CollapsiblePanel id="smc-liquidity" title="Liquidity map"><LiquidityMapPanel map={conf?.liquidity} selected={level} onSelect={(l) => setLevel(level === l.price ? null : l.price)} /></CollapsiblePanel>

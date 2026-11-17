@@ -16,7 +16,9 @@ from app.api.routes import (
     account,
     auth,
     broker,
+    confirmation,
     copilot,
+    data,
     health,
     integrations,
     journal,
@@ -140,6 +142,8 @@ def create_app() -> FastAPI:
     app.include_router(lab.router, prefix="/api")
     app.include_router(smc.router, prefix="/api")
     app.include_router(session.router, prefix="/api")
+    app.include_router(data.router, prefix="/api")
+    app.include_router(confirmation.router, prefix="/api")
     app.include_router(news.router, prefix="/api")
     app.include_router(integrations.router, prefix="/api")
     app.include_router(broker.router, prefix="/api")

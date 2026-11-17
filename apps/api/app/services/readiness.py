@@ -25,7 +25,7 @@ from app.services.session_intel import data_status, market_status, session_conte
 
 CACHE_KEY = "apex:readiness:"
 CACHE_SECONDS = 15
-HISTORY_DAYS = 16  # calendar days of 1m bars: >= 10 prior sessions for time-of-day baselines
+HISTORY_DAYS = 32  # calendar days of 1m bars: ~20 prior sessions for time-of-day baselines
 
 
 def config(style: str = "intraday") -> ChecklistConfig:

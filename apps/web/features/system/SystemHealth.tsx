@@ -7,6 +7,7 @@ import { Callout, Panel, QualityBadge, Stat, StatePill } from "@/components/ui/p
 import { usePolling } from "@/hooks/usePolling";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { formatAge, formatEt, humanizeComponent } from "@/lib/format";
+import { DataReadinessPanel } from "./DataReadiness";
 
 export function SystemHealth() {
   const { status, connection, receivedAt, error } = useSystemStatus();
@@ -94,6 +95,9 @@ export function SystemHealth() {
       </div>
       <div className="mt-4">
         <FeedPanel />
+      </div>
+      <div className="mt-4">
+        <DataReadinessPanel />
       </div>
       {status && (
         <p className="mt-3 text-xs text-faint">

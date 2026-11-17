@@ -117,6 +117,7 @@ async def news_poll(stop: asyncio.Event) -> None:
 
 
 REVIEW_SKIP_KEY = "apex:review:skip:"
+_BACKFILL_PROVIDER: Any = None
 
 
 async def lab_cycle(sm: Any, now: datetime | None = None) -> str:
@@ -158,6 +159,22 @@ async def lab_cycle(sm: Any, now: datetime | None = None) -> str:
             quality = "historical"
         await execute_run(sm, run.id, quality)  # never raises: failures are stored on the run
         return "backtest"
+    # Approved historical backfill: a few sessions per cycle, so the loop stays responsive.
+    try:
+        from app.services.history import get_job, run_job_step
+
+        job = await get_job()
+        if job and job["status"] in ("queued", "running"):
+            global _BACKFILL_PROVIDER
+            if _BACKFILL_PROVIDER is None:
+                from app.marketdata.factory import build_provider
+
+                _BACKFILL_PROVIDER = build_provider(get_settings())
+            async with sm() as session:
+                if await run_job_step(session, _BACKFILL_PROVIDER):
+                    return "backfill"
+    except Exception:
+        log.exception("backfill step failed")
     async with sm() as session:
         for acct in (await session.scalars(select(PaperAccount))).all():
             try:
@@ -212,7 +229,7 @@ async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
         log.exception("could not recover stuck backtests")
     while not stop.is_set():
         try:
-            if await lab_cycle(sm) == "backtest":
+            if await lab_cycle(sm) in ("backtest", "backfill"):
                 continue
         except Exception:  # the loop itself must survive anything (database restarts included)
             log.exception("lab job cycle failed")

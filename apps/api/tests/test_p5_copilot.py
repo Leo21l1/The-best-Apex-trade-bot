@@ -259,7 +259,7 @@ async def test_every_tool_runs_on_an_empty_system_and_reports_missing_data() -> 
         for name in TOOLS:
             args = (
                 {"symbol": "ES", "direction": "long", "entry": 5000, "stop": 4996}
-                if name in ("check_trade_risk", "get_recent_bars", "get_trading_readiness")
+                if name in ("check_trade_risk", "get_recent_bars", "get_trading_readiness", "get_entry_confirmation")
                 else {}
             )
             if name == "get_recent_bars":

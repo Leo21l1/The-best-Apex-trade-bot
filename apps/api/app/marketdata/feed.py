@@ -102,6 +102,13 @@ class IngestionService:
         self._last_status_write = now
         self.status["updated_at"] = time.time()
         self.status["duplicates_dropped"] = self._dupes.dropped
+        # Provider extras (Databento: live contract mapping and the last rejected request).
+        contracts = getattr(self.provider, "contract_map", None)
+        if contracts:
+            self.status["contracts"] = contracts
+        perr = getattr(self.provider, "last_error", None)
+        if perr:
+            self.status["provider_last_error"] = perr
         try:
             await self._redis.set(STATUS_KEY, json.dumps(self.status), ex=STATUS_TTL_S)
         except (RedisError, OSError):

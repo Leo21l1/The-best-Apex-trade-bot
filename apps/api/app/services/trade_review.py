@@ -59,7 +59,7 @@ async def load_trade_data(session: AsyncSession, trade: JournalTrade, settings: 
             session,
             provider,
             trade.symbol,
-            trade.entry_time - timedelta(days=16),  # >= 10 prior sessions for time-of-day baselines
+            trade.entry_time - timedelta(days=32),  # ~20 prior sessions for time-of-day baselines
             trade.exit_time + timedelta(hours=8),
         )
         if provider != "none"

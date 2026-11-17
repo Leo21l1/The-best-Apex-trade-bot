@@ -454,6 +454,49 @@ async def get_trading_readiness(ctx: ToolContext, args: dict[str, Any]) -> dict[
     }
 
 
+async def get_entry_confirmation(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """The deterministic Live Trade Entry Confirmation (15 conditions, state, levels)."""
+    from app.services.confirmation import confirmation
+
+    style = str(args.get("style") or "intraday")
+    c = await confirmation(ctx.session, _symbol(args.get("symbol")), now=ctx.now, style=style)
+    return {
+        **c,
+        "market_data_class": c["data_class"],
+        "data_class": "verified_app_data",
+        "notes": [
+            "The state and every condition status are computed by fixed rules; quote them, never upgrade them.",
+            "Mandatory conditions must all PASS for READY; UNKNOWN is missing data, not a pass.",
+            "PROJECT APEX is analysis only: it never places, modifies or cancels orders.",
+        ],
+    }
+
+
+async def get_data_readiness(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    from app.services.history import coverage, get_job
+
+    syms = [_symbol(x) for x in (args.get("symbols") or [args.get("symbol") or "ES"])][:8]
+    return {
+        "data_class": "verified_app_data",
+        "symbols": [await coverage(ctx.session, s_, now=ctx.now) for s_ in syms],
+        "backfill_job": await get_job(),
+        "note": "Stored history is HISTORICAL. Backfills only run after the user approves a cost estimate.",
+    }
+
+
+async def get_strategy_statistics(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    from app.services.history import strategy_statistics
+
+    sym = _symbol(args.get("symbol")) if args.get("symbol") else None
+    rows = await strategy_statistics(ctx.session, sym, args.get("strategy_id"))
+    return {
+        "data_class": "verified_app_data",
+        "rows": rows,
+        "note": "Backtests on stored data with conservative fills; few trades per segment means low confidence. "
+        "Past results do not predict future results.",
+    }
+
+
 # --- registry -------------------------------------------------------------------------------
 
 _SYMBOL = {"type": "string", "description": "Futures symbol, e.g. ES, MNQ, CL"}
@@ -591,6 +634,43 @@ TOOLS: dict[str, tuple[Any, dict[str, Any]]] = {
                 },
                 ["symbol"],
             ),
+        },
+    ),
+    "get_entry_confirmation": (
+        get_entry_confirmation,
+        {
+            "description": "Live Trade Entry Confirmation for one instrument: state (LONG READY / SHORT READY / WAIT / "
+            "NO TRADE / DATA UNAVAILABLE), the 15 conditions (HTF alignment, structure, trigger, OB/FVG, entry "
+            "zone, VWAP, relative volume, volatility, session, news, reward:risk, Apex risk eligibility, data "
+            "freshness, invalidation, historical performance) with PASS/FAIL/WAIT/UNKNOWN, which are mandatory "
+            "for the active strategy, what is missing and what would confirm it, tick-rounded levels (entry zone, "
+            "stop, T1, T2, extended target, loss/reward per contract after costs), Risk Guardian maximum size, "
+            "regime, volatility, next eligible window and expiry. Use it to explain a setup.",
+            "input_schema": _schema(
+                {
+                    "symbol": _SYMBOL,
+                    "style": {"type": "string", "enum": ["intraday", "scalping", "momentum", "orb", "afternoon"]},
+                },
+                ["symbol"],
+            ),
+        },
+    ),
+    "get_data_readiness": (
+        get_data_readiness,
+        {
+            "description": "Historical data coverage per instrument: sessions stored vs the 20-30 session target, "
+            "missing sessions, earliest/latest bar, readiness of relative volume, volatility and backtests, and "
+            "the approved backfill job progress.",
+            "input_schema": _schema({"symbols": {"type": "array", "items": _SYMBOL, "maxItems": 8}}),
+        },
+    ),
+    "get_strategy_statistics": (
+        get_strategy_statistics,
+        {
+            "description": "Latest completed backtest per strategy and instrument on stored (non-simulated) data: "
+            "in-sample and out-of-sample metrics, validation, and segments by session, weekday, regime, relative "
+            "volume, stop distance and reward:risk.",
+            "input_schema": _schema({"symbol": _SYMBOL, "strategy_id": {"type": "string"}}),
         },
     ),
 }

@@ -150,6 +150,8 @@ class DatabentoProvider(MarketDataProvider):
         self._last_request = 0.0
         self._lock = asyncio.Lock()
         self.last_error: dict[str, Any] | None = None
+        #: root symbol -> {"contract": e.g. "ESZ6", "since": ISO time} from live symbol mappings.
+        self.contract_map: dict[str, dict[str, str]] = {}
 
     def continuous(self, symbol: str) -> str:
         return f"{symbol}.{self._roll}.0"
@@ -276,6 +278,11 @@ class DatabentoProvider(MarketDataProvider):
                     root = roots.get(str(rec.stype_in_symbol))
                     if root:
                         by_id[int(rec.instrument_id)] = root
+                        self.contract_map[root] = {
+                            "contract": str(rec.stype_out_symbol),
+                            "rule": self.continuous(root),
+                            "since": datetime.now(UTC).isoformat(),
+                        }
                         log_event(log, "databento live mapping", symbol=root, contract=str(rec.stype_out_symbol))
                 elif hasattr(rec, "err"):  # ErrorMsg from the gateway
                     raise _classify(RuntimeError(str(rec.err)))
