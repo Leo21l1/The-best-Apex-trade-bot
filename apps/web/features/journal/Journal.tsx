@@ -4,6 +4,7 @@ import type { JournalResponse, JournalTrade } from "@apex/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, EmptyState, Panel, Stat } from "@/components/ui/primitives";
+import { CollapsiblePanel, PnlCalendar } from "@/components/ui/viz";
 import { api, ApiError } from "@/lib/api";
 import { formatEt } from "@/lib/format";
 import { money } from "@/lib/money";
@@ -11,12 +12,24 @@ import { money } from "@/lib/money";
 const STRATEGIES = ["orb", "vwap_trend", "sweep_reversal", "breakout_retest", "momentum_pullback", "vol_expansion", "mean_reversion", "mtf_trend", "discretionary"];
 const input = "w-full rounded-md border border-line bg-panel-2 px-2.5 py-1.5 text-sm outline-none focus:border-accent";
 
+export function dailyPnl(trades: JournalTrade[]): { date: string; net: number; trades: number }[] {
+  const m = new Map<string, { date: string; net: number; trades: number }>();
+  for (const t of trades) {
+    const d = m.get(t.trading_date) ?? { date: t.trading_date, net: 0, trades: 0 };
+    d.net = Math.round((d.net + t.net_pnl) * 100) / 100;
+    d.trades += 1;
+    m.set(t.trading_date, d);
+  }
+  return [...m.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 interface ImportResult { dry_run: boolean; layout: string | null; parsed: number; duplicates: number; imported: number; errors: string[] }
 
 export function Journal() {
   const [data, setData] = useState<JournalResponse | null>(null);
   const [source, setSource] = useState("");
   const [open, setOpen] = useState<number | null>(null);
+  const [month, setMonth] = useState("");
   const load = useCallback(async () => {
     setData(await api<JournalResponse>(`/api/journal/trades${source ? `?source=${source}` : ""}`).catch(() => null));
   }, [source]);
@@ -43,6 +56,11 @@ export function Journal() {
                 <Stat label="Max drawdown" value={money(s.max_drawdown)} />
               </div>
             </Panel>
+          )}
+          {data && data.trades.length > 0 && (
+            <CollapsiblePanel id="journal-calendar" title="Calendar (daily net P&L)">
+              <PnlCalendar days={dailyPnl(data.trades)} month={month || data.trades[0]!.trading_date.slice(0, 7)} onMonth={setMonth} />
+            </CollapsiblePanel>
           )}
           <Panel title="Trades" actions={
             <select aria-label="Source filter" className="rounded border border-line bg-panel-2 px-2 py-1 text-xs" value={source} onChange={(e) => setSource(e.target.value)}>

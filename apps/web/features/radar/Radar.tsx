@@ -21,9 +21,11 @@ function TrendCell({ row }: { row: RadarTimeframe | undefined }) {
     return <span className="text-faint" title={row?.note ?? "no data"}>·</span>;
   }
   const up = row.trend === "up";
+  const heat = row.rsi === null ? 0 : Math.min(1, Math.abs(row.rsi - 50) / 30);
   return (
     <span
-      className={cx("font-mono text-xs", up ? "text-up" : row.trend === "down" ? "text-down" : "text-muted")}
+      style={{ background: `color-mix(in srgb, var(--color-${(row.rsi ?? 50) >= 50 ? "up" : "down"}) ${Math.round(heat * 35)}%, transparent)` }}
+      className={cx("inline-block min-w-12 rounded px-1 py-0.5 font-mono text-xs", up ? "text-up" : row.trend === "down" ? "text-down" : "text-muted")}
       title={`EMA20 ${up ? ">" : row.trend === "down" ? "<" : "="} EMA50 · RSI ${row.rsi ?? "n/a"} · ATR ${row.atr_pct ?? "n/a"}% · rel vol ${row.rel_volume ?? "n/a"}`}
     >
       {up ? "▲" : row.trend === "down" ? "▼" : "■"}
@@ -33,6 +35,21 @@ function TrendCell({ row }: { row: RadarTimeframe | undefined }) {
 }
 
 const TFS = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"] as const;
+type SortKey = "symbol" | "align" | "setups" | "last" | `rsi:${string}`;
+
+/** Trend alignment across timeframes: +1 per up, -1 per down (closed bars, EMA20 vs EMA50). */
+export function alignment(s: RadarSymbol): number {
+  return s.timeframes.reduce((a, r) => a + (r.trend === "up" ? 1 : r.trend === "down" ? -1 : 0), 0);
+}
+
+function sortValue(s: RadarSymbol, k: SortKey): number | string {
+  if (k === "symbol") return s.symbol;
+  if (k === "align") return alignment(s);
+  if (k === "setups") return s.evaluations.filter((e) => e.triggered).length;
+  if (k === "last") return s.last ?? -Infinity;
+  return s.timeframes.find((r) => r.timeframe === k.slice(4))?.rsi ?? -Infinity;
+}
+
 const num = (v: number | null) => (v === null ? "—" : v.toLocaleString("en-US", { maximumFractionDigits: 2 }));
 
 export function Radar() {
@@ -41,15 +58,28 @@ export function Radar() {
   const [onlyWatch, setOnlyWatch] = useState(false);
   const [watch, setWatch] = useState<string[]>([]);
   const [open, setOpen] = useState<string | null>(null);
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of browser storage after mount
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "symbol", desc: false });
   useEffect(() => setWatch(loadWatchlist()), []);
 
   const rows = useMemo(() => {
     const q = query.trim().toUpperCase();
-    return (data?.symbols ?? []).filter(
+    const out = (data?.symbols ?? []).filter(
       (s) => (!q || s.symbol.includes(q)) && (!onlyWatch || watch.includes(s.symbol)),
     );
-  }, [data, query, onlyWatch, watch]);
+    const dir = sort.desc ? -1 : 1;
+    return [...out].sort((a, b) => {
+      const x = sortValue(a, sort.key), y = sortValue(b, sort.key);
+      return (x < y ? -1 : x > y ? 1 : 0) * dir;
+    });
+  }, [data, query, onlyWatch, watch, sort]);
+  const th = (key: SortKey, label: string, cls = "") => (
+    <th className={cx("px-2 py-2 font-medium", cls)} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}>
+      <button type="button" onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : key !== "symbol" })}
+        className="hover:text-text" data-testid={`sort-${key}`}>
+        {label}{sort.key === key ? (sort.desc ? " ↓" : " ↑") : ""}
+      </button>
+    </th>
+  );
 
   const star = (symbol: string) => {
     const next = toggleSymbol(watch, symbol);
@@ -88,7 +118,7 @@ export function Radar() {
             Watchlist only ({watch.length})
           </label>
           <span className="ml-auto text-xs text-faint">
-            ▲/▼ = EMA20 vs EMA50 on closed bars; number = RSI(14). Hover for detail.
+            ▲/▼ = EMA20 vs EMA50 on closed bars; number = RSI(14); cell shade = RSI distance from 50. Click a column to sort.
           </span>
         </div>
 
@@ -103,12 +133,13 @@ export function Radar() {
             <table className="w-full min-w-[860px] text-sm" data-testid="radar-table">
               <thead>
                 <tr className="border-b border-line text-left text-xs text-faint">
-                  <th className="px-4 py-2 font-medium">Symbol</th>
-                  <th className="px-2 py-2 text-right font-medium">Last</th>
+                  {th("symbol", "Symbol", "pl-4")}
+                  {th("last", "Last", "text-right")}
                   <th className="px-2 py-2 font-medium">Regime</th>
                   <th className="px-2 py-2 font-medium">VWAP</th>
-                  {TFS.map((t) => <th key={t} className="px-2 py-2 text-center font-mono font-medium">{t}</th>)}
-                  <th className="px-2 py-2 text-right font-medium">Setups</th>
+                  {TFS.map((t) => <Fragment key={t}>{th(`rsi:${t}`, t, "text-center font-mono")}</Fragment>)}
+                  {th("align", "Align", "text-center")}
+                  {th("setups", "Setups", "text-right")}
                 </tr>
               </thead>
               <tbody>
@@ -145,11 +176,21 @@ export function Radar() {
                             <TrendCell row={s.timeframes.find((r) => r.timeframe === t)} />
                           </td>
                         ))}
-                        <td className="px-2 py-2 text-right font-mono text-xs">{triggered} / {s.evaluations.length}</td>
+                        <td className="px-2 py-2 text-center">
+                          <span className={cx("rounded px-1.5 py-0.5 font-mono text-xs", alignment(s) > 0 ? "text-up" : alignment(s) < 0 ? "text-down" : "text-muted")}
+                            style={{ background: `color-mix(in srgb, var(--color-${alignment(s) >= 0 ? "up" : "down"}) ${Math.round(Math.min(1, Math.abs(alignment(s)) / TFS.length) * 40)}%, transparent)` }}
+                            title="Trend alignment: +1 per timeframe up, -1 per timeframe down">
+                            {alignment(s) > 0 ? "+" : ""}{alignment(s)}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-right font-mono text-xs">
+                          {triggered} / {s.evaluations.length}
+                          <a href={`/smc?symbol=${s.symbol}`} className="ml-2 font-sans text-accent hover:underline" data-testid={`radar-chart-${s.symbol}`}>chart →</a>
+                        </td>
                       </tr>
                       {open === s.symbol && (
                         <tr className="border-b border-line/60 bg-panel-2/30">
-                          <td colSpan={14} className="px-4 py-3"><Detail s={s} /></td>
+                          <td colSpan={15} className="px-4 py-3"><Detail s={s} /></td>
                         </tr>
                       )}
                     </Fragment>

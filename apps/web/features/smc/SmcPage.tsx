@@ -4,6 +4,7 @@ import type { ChartEvent, Instrument, SmcPattern, Timeframe } from "@apex/shared
 import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, Panel, QualityBadge } from "@/components/ui/primitives";
+import { CollapsiblePanel, ResizableSplit } from "@/components/ui/viz";
 import { usePolling } from "@/hooks/usePolling";
 import { formatPrice } from "@/lib/candles";
 import { patternShapes } from "@/lib/smc";
@@ -49,8 +50,7 @@ export function SmcPage() {
         <div className="mb-4"><Callout tone="warn" title="SIMULATED DATA">Patterns below are detected on synthetic prices. They demonstrate the detectors, not real market structure.</Callout></div>
       )}
       {error && <div className="mb-4"><Callout tone="danger" title="Analysis unavailable">{error}</Callout></div>}
-      <div className="grid gap-4 2xl:grid-cols-[1fr_380px]">
-        <div className="min-w-0 space-y-4">
+      <ResizableSplit id="smc" left={<>
           <Panel>
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <select aria-label="SMC instrument" value={symbol} onChange={(e) => { setSymbol(e.target.value); setSelected(null); setLevel(null); }}
@@ -80,13 +80,11 @@ export function SmcPage() {
             </p>
           </Panel>
           {selected && <PatternInspector p={selected} analysis={analysis} onClose={() => setSelected(null)} />}
-          <Panel title="Multi-timeframe confluence"><ConfluencePanel c={conf} /></Panel>
-        </div>
-        <div className="min-w-0 space-y-4">
-          <Panel title="Liquidity map"><LiquidityMapPanel map={conf?.liquidity} selected={level} onSelect={(l) => setLevel(level === l.price ? null : l.price)} /></Panel>
-          <Panel title="Smart money analysis"><PatternList analysis={analysis} selected={selected?.id ?? null} onSelect={setSelected} /></Panel>
-        </div>
-      </div>
+          <CollapsiblePanel id="smc-confluence" title="Multi-timeframe confluence"><ConfluencePanel c={conf} /></CollapsiblePanel>
+        </>} right={<>
+          <CollapsiblePanel id="smc-liquidity" title="Liquidity map"><LiquidityMapPanel map={conf?.liquidity} selected={level} onSelect={(l) => setLevel(level === l.price ? null : l.price)} /></CollapsiblePanel>
+          <CollapsiblePanel id="smc-patterns" title="Smart money analysis"><PatternList analysis={analysis} selected={selected?.id ?? null} onSelect={setSelected} /></CollapsiblePanel>
+        </>} />
       {event && <NewsPanel event={event} onClose={() => setEvent(null)} />}
     </>
   );

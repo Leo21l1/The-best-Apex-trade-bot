@@ -769,6 +769,9 @@ export interface ChartEvent {
   bias: string;
   explanation: string;
   affects_symbol: boolean;
+  /** "news" for published announcements from official feeds; absent for calendar events. */
+  kind?: "news";
+  impact?: string;
 }
 
 export interface ChartSignal {

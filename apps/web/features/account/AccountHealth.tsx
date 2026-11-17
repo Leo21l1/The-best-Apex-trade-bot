@@ -10,6 +10,7 @@ import type {
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, EmptyState, Panel, Stat, StatePill } from "@/components/ui/primitives";
+import { Gauge } from "@/components/ui/viz";
 import { useSession } from "@/hooks/useSession";
 import { api, ApiError } from "@/lib/api";
 import { formatAge, formatEt } from "@/lib/format";
@@ -92,7 +93,10 @@ export function AccountHealth() {
           </EmptyState>
         </Panel>
       ) : (
-        <AccountSummary acct={acct} />
+        <>
+          <RiskGauges st={st} rs={rs!} />
+          <AccountSummary acct={acct} />
+        </>
       )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -497,5 +501,30 @@ function RuleRowView({ r, admin, open, onToggle, onChanged }: { r: Rule; admin: 
         </tr>
       )}
     </>
+  );
+}
+
+
+/** Utilisation gauges computed from the entered figures (advisory; rules may be unverified). */
+function RiskGauges({ st, rs }: { st: AccountStateResponse["state"]; rs: AccountStateResponse["rules"] }) {
+  const used = (rem: number | null, limit: number) => (rem === null || limit <= 0 ? null : 1 - Math.max(0, rem) / limit);
+  const fmt = (v: number | null) => (v === null ? "unknown" : money(v));
+  const toGo = st.profit_to_target === null ? null : Math.max(0, 1 - Math.max(0, st.profit_to_target) / rs.profit_target);
+  return (
+    <Panel title="Risk gauges" className="mb-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4" data-testid="risk-gauges">
+        <Gauge testId="gauge-daily" value={used(st.daily_loss_remaining, rs.daily_loss_limit)} label="Daily loss limit used"
+          detail={`${fmt(st.daily_loss_remaining)} left of ${fmt(rs.daily_loss_limit)}`} />
+        <Gauge testId="gauge-drawdown" value={used(st.drawdown_room, rs.max_drawdown)} label="EOD drawdown used"
+          detail={`${fmt(st.drawdown_room)} above threshold ${fmt(st.drawdown_threshold)}`} />
+        <Gauge testId="gauge-contracts" value={rs.max_contracts > 0 ? st.contracts_in_use / rs.max_contracts : null} label="Contract exposure"
+          detail={`${st.contracts_in_use} of ${rs.max_contracts} standard equivalents`} />
+        <Gauge testId="gauge-target" value={toGo} label="Profit target progress" detail={`${fmt(st.profit_to_target)} to go`} />
+      </div>
+      <p className="mt-2 text-[11px] text-faint">
+        Gauges use the balances you entered{rs.verified ? "" : " and UNVERIFIED rule values"}. Target progress shares the
+        utilisation colours: higher is closer to the target.
+      </p>
+    </Panel>
   );
 }

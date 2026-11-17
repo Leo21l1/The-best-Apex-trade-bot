@@ -7,11 +7,12 @@ with that provider's data class (simulated data is never presented as live).
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from redis.exceptions import RedisError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, SessionDep
@@ -22,6 +23,7 @@ from app.marketdata.instruments import INSTRUMENTS, get_instrument
 from app.marketdata.status import read_feed_status
 from app.marketdata.store import query_bars
 from app.marketdata.types import Timeframe
+from app.models.calendar import NewsItem
 from app.research.bars import Bar, closed_only
 from app.research.confluence import confluence
 from app.research.smc import Analysis, SmcConfig, analyze
@@ -126,6 +128,13 @@ async def _confluence(session: AsyncSession, sym: str, now: datetime) -> dict[st
     analyses = await _analyses(session, sym, now)
     data = await data_state(session, sym, now)
     news = await news_exposure(session, sym, now, s.calendar_pre_event_minutes, s.calendar_post_event_minutes)
+    fresh = await _fresh_news(session, sym, now)
+    if fresh:
+        news = {
+            "status": "inside_window",
+            "summary": "Fresh published news: " + "; ".join(f"{n.impact} {n.title[:80]}" for n in fresh),
+            "events": news.get("events", []),
+        }
     _rules, st = await current_state(session, now)
     risk = {
         "known": st.known,
@@ -136,6 +145,20 @@ async def _confluence(session: AsyncSession, sym: str, now: datetime) -> dict[st
     out = confluence(sym, analyses, data["price"], float(INSTRUMENTS[sym].tick_size), news, risk, data)
     out["liquidity"] = _merge_liquidity(analyses, data["price"])
     return out
+
+
+async def _fresh_news(session: AsyncSession, sym: str, now: datetime) -> list[NewsItem]:
+    """HIGH/CRITICAL items affecting ``sym`` detected in the last 15 minutes (they force NO TRADE)."""
+    rows = (
+        await session.scalars(
+            select(NewsItem).where(
+                NewsItem.impact.in_(("HIGH", "CRITICAL")),
+                NewsItem.detected_at >= now - timedelta(minutes=15),
+                NewsItem.detected_at <= now,
+            )
+        )
+    ).all()
+    return [n for n in rows if sym in (n.instruments or [])]
 
 
 @router.get("/confluence")

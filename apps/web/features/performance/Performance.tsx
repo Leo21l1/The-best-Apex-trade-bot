@@ -4,6 +4,7 @@ import type { AnalyticsResponse, TradeStats } from "@apex/shared-types";
 import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, EmptyState, Panel, Stat } from "@/components/ui/primitives";
+import { CollapsiblePanel, EquityDrawdown, PnlCalendar } from "@/components/ui/viz";
 import { usePolling } from "@/hooks/usePolling";
 import { money } from "@/lib/money";
 
@@ -33,6 +34,7 @@ export function Performance() {
   const [days, setDays] = useState(90);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [month, setMonth] = useState("");
   const range = start ? `&start=${start}${end ? `&end=${end}` : ""}` : "";
   const { data: a } = usePolling<AnalyticsResponse & {
     by_news: (TradeStats & { key: string })[];
@@ -40,6 +42,8 @@ export function Performance() {
     rule_adherence: { trades_with_stop: number; exits_beyond_stop: number; stop_respected_rate: number | null; self_reported_followed_rate: number | null };
     common_findings: { code: string; title: string; count: number; net_pnl: number }[];
     sample_size_note: string | null;
+    equity_curve: { t: string; trade_id: number; equity: number; drawdown: number }[];
+    daily: { date: string; net: number; trades: number }[];
   }>(`/api/analytics?period=${period}&days=${days}${range}`, 60_000);
   const sel = "rounded border border-line bg-panel-2 px-2 py-1 text-xs";
   return (
@@ -71,6 +75,15 @@ export function Performance() {
               <Stat label="Max drawdown" value={money(a.overall.max_drawdown)} />
             </div>
           </Panel>
+          <div className="grid gap-4 xl:grid-cols-[3fr_2fr]">
+            <CollapsiblePanel id="perf-equity" title="Equity curve and drawdown (journal P&L)">
+              <EquityDrawdown points={a.equity_curve} />
+              <p className="mt-1 text-[11px] text-faint">Cumulative net P&L of journal trades in this window; not the broker balance and excludes open-trade swings.</p>
+            </CollapsiblePanel>
+            <CollapsiblePanel id="perf-calendar" title="Daily P&L calendar">
+              <PnlCalendar days={a.daily} month={month || (a.daily.at(-1)?.date.slice(0, 7) ?? new Date().toISOString().slice(0, 7))} onMonth={setMonth} />
+            </CollapsiblePanel>
+          </div>
           <div className="grid gap-4 xl:grid-cols-2">
             <Panel title={`${period[0]!.toUpperCase()}${period.slice(1)}ly report`}><Table rows={a.by_period} label={period} /></Panel>
             <Panel title="By strategy"><Table rows={a.by_strategy} label="Strategy" /></Panel>

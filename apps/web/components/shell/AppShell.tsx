@@ -8,6 +8,7 @@ import { useSession } from "@/hooks/useSession";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutHelp } from "./ShortcutHelp";
 import { Sidebar } from "./Sidebar";
+import { NewsTicker } from "./NewsTicker";
 import { TopBar } from "./TopBar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -62,6 +63,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onMenu={() => setNavOpen(true)} onPalette={() => setPalette(true)} />
+        <NewsTicker />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6">{children}</main>
         <footer className="border-t border-line px-6 py-3 text-[11px] text-faint">
           Analysis only. PROJECT APEX does not place, modify or cancel orders. Risk figures are

@@ -473,6 +473,8 @@ async def analytics(
         ),
         "rules_verified": rules.verified,
         "by_news": grouped(trades, _news_bucket),
+        "equity_curve": _equity(trades),
+        "daily": _daily(trades),
         "average_planned_rr": _avg_rr(trades),
         "rule_adherence": _adherence(trades),
         "common_findings": _common_findings(trades),
@@ -485,6 +487,28 @@ async def analytics(
             "PROJECT APEX never changes strategy parameters automatically.",
         ],
     }
+
+
+def _equity(trades: list[JournalTrade]) -> list[dict[str, Any]]:
+    """Cumulative net P&L after each closed trade and the drawdown from its running peak.
+
+    Journal P&L only: it is not the broker account balance and excludes intraday open-trade swings.
+    """
+    out, cum, peak = [], 0.0, 0.0
+    for t in trades:
+        cum = round(cum + t.net_pnl, 2)
+        peak = max(peak, cum)
+        out.append({"t": t.exit_time.isoformat(), "trade_id": t.id, "equity": cum, "drawdown": round(cum - peak, 2)})
+    return out
+
+
+def _daily(trades: list[JournalTrade]) -> list[dict[str, Any]]:
+    days: dict[str, dict[str, Any]] = {}
+    for t in trades:
+        d = days.setdefault(t.trading_date.isoformat(), {"date": t.trading_date.isoformat(), "net": 0.0, "trades": 0})
+        d["net"] = round(d["net"] + t.net_pnl, 2)
+        d["trades"] += 1
+    return sorted(days.values(), key=lambda x: x["date"])
 
 
 def _news_bucket(t: JournalTrade) -> str:

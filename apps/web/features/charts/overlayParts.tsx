@@ -93,10 +93,10 @@ export function NewsPanel({ event, onClose }: { event: ChartEvent; onClose: () =
         </div>
         <dl className="text-sm">
           {row("Headline", event.title)}
-          {row("Source", event.source === "manual" ? "Manual entry" : event.source_ref ?? event.source)}
-          {row("Scheduled time", formatEt(event.ts, true))}
-          {row("Recorded in APEX", event.detected_at ? formatEt(event.detected_at, true) : "—")}
-          {row("Impact level", <span className={cx("rounded border px-1.5 py-px text-xs uppercase", IMPORTANCE[event.importance])}>{event.importance}</span>)}
+          {row("Source", event.kind === "news" ? `${event.source} (official feed)` : event.source === "manual" ? "Manual entry" : event.source_ref ?? event.source)}
+          {row(event.kind === "news" ? "Published" : "Scheduled time", formatEt(event.ts, true))}
+          {row(event.kind === "news" ? "Detected by APEX" : "Recorded in APEX", event.detected_at ? formatEt(event.detected_at, true) : "—")}
+          {row("Impact level", <span className={cx("rounded border px-1.5 py-px text-xs uppercase", IMPORTANCE[event.importance])}>{event.impact ?? event.importance}</span>)}
           {row("Category", event.category)}
           {row("Affected markets", event.affected.join(", ") || "none mapped")}
           {row("Directional bias", event.bias)}
@@ -104,8 +104,8 @@ export function NewsPanel({ event, onClose }: { event: ChartEvent; onClose: () =
         <p className="mt-4 text-xs text-muted">{event.explanation}</p>
         {event.source_ref?.startsWith("http") ? (
           <a href={event.source_ref} target="_blank" rel="noreferrer noopener" className="mt-3 inline-block text-xs text-accent hover:underline">Original source →</a>
-        ) : <p className="mt-3 text-xs text-faint">No article link: this is a scheduled calendar event, not a news article.</p>}
-        <p className="mt-4 text-[11px] text-faint">PROJECT APEX does not attribute price moves to events. Breaking-news feeds need a licensed provider and are not connected.</p>
+        ) : <p className="mt-3 text-xs text-faint">{event.kind === "news" ? "The source provided no link." : "No article link: this is a scheduled calendar event, not a news article."}</p>}
+        <p className="mt-4 text-[11px] text-faint">PROJECT APEX does not attribute price moves to events. Official feeds (Federal Reserve, EIA) are connected; real-time breaking-news wires need a licensed provider and are not connected.</p>
       </aside>
     </div>
   );

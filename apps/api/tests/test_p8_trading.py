@@ -567,5 +567,9 @@ async def test_analytics_news_adherence_and_sample_size(admin_client: httpx.Asyn
     )
     assert a["by_news"][0]["key"] == "no recorded event"
     assert any(f["code"] == "beyond_stop" for f in a["common_findings"])
+    eq = a["equity_curve"]
+    assert len(eq) == 3 and eq[-1]["equity"] == round(a["overall"]["net_pnl"], 2)
+    assert all(p["drawdown"] <= 0 for p in eq) and min(p["drawdown"] for p in eq) == -a["overall"]["max_drawdown"]
+    assert a["daily"] == [{"date": "2026-11-11", "net": round(a["overall"]["net_pnl"], 2), "trades": 3}]
     out = (await admin_client.get("/api/analytics?start=2026-12-01")).json()
     assert out["overall"]["trades"] == 0

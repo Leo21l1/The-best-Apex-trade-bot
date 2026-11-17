@@ -4,6 +4,7 @@ import type { AccountStateResponse, RulesResponse, SnapshotResponse } from "@ape
 import Link from "next/link";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, EmptyState, Panel, QualityBadge, Stat, StatePill } from "@/components/ui/primitives";
+import { CollapsiblePanel } from "@/components/ui/viz";
 import { usePolling } from "@/hooks/usePolling";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { formatPrice } from "@/lib/candles";
@@ -95,7 +96,7 @@ export function Overview() {
           </p>
         </Panel>
 
-        <Panel title="Risk budget">
+        <CollapsiblePanel id="ov-risk" title="Risk budget">
           {!acct?.state.known ? (
             <EmptyState title="Unknown">
               No account snapshot has been entered. Risk budget is treated as unknown — not as available.{" "}
@@ -114,9 +115,9 @@ export function Overview() {
               <p className="mt-2 text-xs text-faint">From the snapshot you entered; advisory.</p>
             </div>
           )}
-        </Panel>
+        </CollapsiblePanel>
 
-        <Panel title="Apex rule values" actions={<StatePill state={rules?.verified ? "ok" : "degraded"} label={rules?.verified ? "Verified" : "Unverified"} />}>
+        <CollapsiblePanel id="ov-rules" title="Apex rule values" actions={<StatePill state={rules?.verified ? "ok" : "degraded"} label={rules?.verified ? "Verified" : "Unverified"} />}>
           <dl className="space-y-2 text-sm">
             {(rules?.rules ?? []).filter((r) => r.kind !== "text" && r.value).map((r) => (
               <div key={r.key} className="flex justify-between gap-3">
@@ -126,9 +127,9 @@ export function Overview() {
             ))}
           </dl>
           <Link href="/account" className="mt-3 inline-block text-xs text-accent hover:underline">Review and verify rules →</Link>
-        </Panel>
+        </CollapsiblePanel>
 
-        <Panel title="System" className="lg:col-span-2">
+        <CollapsiblePanel id="ov-system" title="System" className="lg:col-span-2">
           {status ? (
             <>
               <div className="mb-3 grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -151,18 +152,18 @@ export function Overview() {
           ) : (
             <p className="text-sm text-faint">Loading status…</p>
           )}
-        </Panel>
+        </CollapsiblePanel>
 
-        <Panel title="Opportunities" className="lg:col-span-3">
+        <CollapsiblePanel id="ov-opps" title="Opportunities" className="lg:col-span-3">
           <EmptyState title="No ranked opportunities">
             Nothing is ranked until a strategy passes research validation on real data. Unranked
             research candidates are listed on the{" "}
             <Link href="/opportunities" className="text-accent hover:underline">Opportunity Leaderboard</Link>.
             The system never manufactures a trade to fill this panel.
           </EmptyState>
-        </Panel>
+        </CollapsiblePanel>
 
-        <Panel title="Build roadmap" className="lg:col-span-3">
+        <CollapsiblePanel id="ov-roadmap" title="Build roadmap" className="lg:col-span-3">
           <ul className="grid gap-x-6 gap-y-1.5 text-sm sm:grid-cols-2 lg:grid-cols-3">
             {NAV.map((n) => (
               <li key={n.href} className="flex items-center justify-between gap-2">
@@ -175,7 +176,7 @@ export function Overview() {
               </li>
             ))}
           </ul>
-        </Panel>
+        </CollapsiblePanel>
       </div>
     </>
   );
