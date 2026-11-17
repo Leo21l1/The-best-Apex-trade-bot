@@ -98,7 +98,7 @@ export function DataReadinessPanel() {
                       <td className="py-1 pr-2 font-mono">{s.symbol}</td>
                       <td className="pr-2 font-mono">{ct ? `${ct.contract}` : "—"}</td>
                       <td className="pr-2 font-mono">{s.sessions_stored ?? 0}/{s.target_sessions ?? "—"}</td>
-                      <td className="pr-2 font-mono">{s.earliest_bar ? formatEt(s.earliest_bar) : "—"} → {s.latest_bar ? formatEt(s.latest_bar) : "—"}</td>
+                      <td className="pr-2 font-mono">{s.earliest_bar ? formatEt(s.earliest_bar, true) : "—"} → {s.latest_bar ? formatEt(s.latest_bar, true) : "—"}</td>
                       <td className="pr-2 font-mono" title={(s.missing_sessions ?? []).join(", ")}>{s.missing_sessions?.length ?? "—"}</td>
                       <td className="pr-2"><Ready v={s.relative_volume_readiness} /></td>
                       <td className="pr-2"><Ready v={s.volatility_readiness} /></td>
