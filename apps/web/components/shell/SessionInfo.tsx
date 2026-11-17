@@ -1,6 +1,6 @@
 "use client";
 
-import type { CalendarResponse } from "@apex/shared-types";
+import type { CalendarResponse, Readiness } from "@apex/shared-types";
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import { cx } from "@/components/ui/primitives";
@@ -15,11 +15,16 @@ const minute = () => Math.floor(Date.now() / 15_000);
 
 export function SessionPill() {
   const tick = useSyncExternalStore(subscribe, minute, () => 0);
+  // Authoritative: the server's session intelligence (CME holidays, early closes, maintenance).
+  const { data } = usePolling<Readiness["session"]>("/api/session/context?symbol=ES", 60_000);
   if (!tick) return null;
-  const s = sessionState(new Date());
+  const fallback = sessionState(new Date()); // only until the server answers
+  const open = data ? data.market.open : fallback.open;
+  const label = data ? (open ? data.window.label : `Closed: ${data.market.reason}`) : fallback.label;
   return (
-    <span className={cx("hidden items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] lg:inline-flex", s.open ? "border-up/30 text-up" : "border-line text-muted")} data-testid="session-pill">
-      <span className={cx("h-1.5 w-1.5 rounded-full", s.open ? "bg-up" : "bg-faint")} />{s.label}
+    <span title={data ? `${data.ny_time} · next: ${data.next_transition.label} at ${data.next_transition.at_et} ET` : undefined}
+      className={cx("hidden max-w-64 items-center gap-1.5 truncate rounded border px-2 py-0.5 text-[11px] lg:inline-flex", open ? "border-up/30 text-up" : "border-line text-muted")} data-testid="session-pill">
+      <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", open ? "bg-up" : "bg-faint")} aria-hidden />{label}
     </span>
   );
 }
