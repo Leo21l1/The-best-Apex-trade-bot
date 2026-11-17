@@ -147,7 +147,8 @@ def static_components() -> list[ComponentStatus]:
         ComponentStatus(
             name="tradovate_readonly",
             state=ComponentState.NOT_CONFIGURED,
-            detail="Read-only account connectivity not configured. Use manual entry / CSV import.",
+            detail="API sync not permitted for Apex evaluation accounts (policy checked 2026-11-17: Tradovate "
+            "excludes prop/evaluation accounts from API access). Use Journal > Broker statement import.",
             checked_at=now,
         ),
         ComponentStatus(

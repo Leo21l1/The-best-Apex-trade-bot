@@ -26,8 +26,9 @@ WebSocket client.
 ## Read-only broker connectivity
 
 Tradovate read-only access may be added only when officially documented, authorised for the
-account, and technically verified. Until then: manual balance entry, position updates and CSV
-trade import (Phase 4).
+account, and technically verified. The 2026-11-17 review ([broker-connectivity.md](broker-connectivity.md))
+found it is not available for Apex evaluation accounts, so the broker-statement import (Performance,
+Orders/Fills, Cash History, Positions, balances) is used instead.
 
 ## Trading terminal (added later)
 

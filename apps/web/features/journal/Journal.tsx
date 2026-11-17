@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, EmptyState, Panel, Stat } from "@/components/ui/primitives";
 import { CollapsiblePanel, PnlCalendar } from "@/components/ui/viz";
 import { api, ApiError } from "@/lib/api";
+import { BrokerImport } from "./BrokerImport";
 import { formatEt } from "@/lib/format";
 import { money } from "@/lib/money";
 
@@ -83,7 +84,10 @@ export function Journal() {
             )}
           </Panel>
         </div>
-        <ImportPanel onDone={load} />
+        <div className="min-w-0 space-y-4">
+          <ImportPanel onDone={load} />
+        </div>
+        <div className="min-w-0 xl:col-span-2"><BrokerImport onImported={load} /></div>
       </div>
     </>
   );
