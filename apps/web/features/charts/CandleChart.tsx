@@ -20,6 +20,8 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
 import { MARKET_TZ } from "@/lib/format";
+import type { MarkerOut, SegmentOut, ZoneOut } from "@/lib/smc";
+import { ZonesPrimitive } from "./zones";
 
 const COLORS = {
   bg: "#11141a", text: "#8b939e", grid: "#1b2028", border: "#262b33",
@@ -50,6 +52,7 @@ const LEVEL_NAMES: Record<string, string> = {
  */
 export function CandleChart({
   bars, tick, daily, seriesKey, onHover, overlays, toggles, lines, markers, onEventClick, height,
+  smc, highlightPrice, onPatternClick,
 }: {
   bars: Bar[];
   tick: number;
@@ -62,6 +65,10 @@ export function CandleChart({
   markers?: ExtraMarker[];
   onEventClick?: (e: ChartEvent) => void;
   height?: string;
+  /** Smart-money shapes (zones, level segments, markers) from ``patternShapes``. */
+  smc?: { zones: ZoneOut[]; segments: SegmentOut[]; markers: MarkerOut[] } | null;
+  highlightPrice?: number | null;
+  onPatternClick?: (id: string) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -76,12 +83,15 @@ export function CandleChart({
   const dailyRef = useRef(daily);
   const eventsRef = useRef<ChartEvent[]>([]);
   const clickRef = useRef(onEventClick);
+  const patternClickRef = useRef(onPatternClick);
+  const zones = useRef<ZonesPrimitive | null>(null);
 
   useEffect(() => {
     barsRef.current = bars;
     hoverRef.current = onHover;
     dailyRef.current = daily;
     clickRef.current = onEventClick;
+    patternClickRef.current = onPatternClick;
   });
 
   useEffect(() => {
@@ -118,6 +128,8 @@ export function CandleChart({
     const mk = (color: string) => c.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
     lineSeries.current = { ema20: mk(COLORS.ema20), ema50: mk(COLORS.ema50), vwap: mk(COLORS.vwap) };
     markerApi.current = createSeriesMarkers(candles.current, []);
+    zones.current = new ZonesPrimitive();
+    candles.current.attachPrimitive(zones.current);
     c.subscribeCrosshairMove((param) => {
       const t = param.time as number | undefined;
       hoverRef.current?.(t === undefined ? null : (barsRef.current.find((b) => b.t === t) ?? null));
@@ -126,7 +138,17 @@ export function CandleChart({
       const t = param.time as number | undefined;
       if (t === undefined) return;
       const ev = eventsRef.current.find((e) => e.t === t);
-      if (ev) clickRef.current?.(ev);
+      if (ev) { clickRef.current?.(ev); return; }
+      const hovered = typeof param.hoveredObjectId === "string" ? param.hoveredObjectId : "";
+      if (hovered.startsWith("smc-")) { patternClickRef.current?.(hovered.slice(4)); return; }
+      const z = zones.current;
+      const cs = candles.current;
+      if (!z || !cs || !param.point) return;
+      const price = cs.coordinateToPrice(param.point.y);
+      const seg = z.segments.find((s) => t >= s.t1 && t <= s.t2 && Math.abs((cs.priceToCoordinate(s.price) ?? -99) - param.point!.y) <= 4);
+      if (seg) { patternClickRef.current?.(seg.id); return; }
+      const hit = price === null ? null : z.hit(t, price);
+      if (hit) patternClickRef.current?.(hit.id);
     });
     return () => {
       c.remove();
@@ -134,6 +156,7 @@ export function CandleChart({
       candles.current = null;
       volume.current = null;
       markerApi.current = null;
+      zones.current = null;
       priceLines.current = [];
       drawn.current = null;
     };
@@ -203,9 +226,13 @@ export function CandleChart({
     for (const m of markers ?? []) {
       if (visible.has(m.t)) ms.push({ time: m.t as UTCTimestamp, position: m.position, shape: m.shape, color: m.color, text: m.text });
     }
+    for (const m of smc?.markers ?? []) {
+      if (visible.has(m.t)) ms.push({ time: m.t as UTCTimestamp, position: m.position, shape: m.shape, color: m.color, text: m.text, id: `smc-${m.id}` });
+    }
+    zones.current?.set(smc?.zones ?? [], smc?.segments ?? [], highlightPrice ?? null);
     ms.sort((a, b) => (a.time as number) - (b.time as number));
     markerApi.current?.setMarkers(ms);
-  }, [overlays, toggles, lines, markers, bars]);
+  }, [overlays, toggles, lines, markers, bars, smc, highlightPrice]);
 
   return <div ref={container} className={height ?? "h-[440px] w-full sm:h-[520px]"} data-testid="candle-chart" />;
 }

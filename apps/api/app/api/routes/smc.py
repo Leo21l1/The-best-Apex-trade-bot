@@ -146,10 +146,15 @@ async def confluence_view(_: CurrentUser, session: SessionDep, symbol: str) -> d
 def _merge_liquidity(analyses: dict[str, Analysis], price: float | None) -> dict[str, Any]:
     weight = {"1m": 0, "5m": 5, "15m": 10, "1h": 15}
     levels: list[dict[str, Any]] = []
+    best: dict[float, dict[str, Any]] = {}
     for tf, a in analyses.items():
+        if tf == "1m":
+            continue  # 1-minute pivots are too noisy for a liquidity map
         for lv in a.liquidity:
-            levels.append({**lv, "timeframe": tf, "score": round(lv["score"] + weight.get(tf, 0), 1)})
-    levels.sort(key=lambda x: -x["score"])
+            row = {**lv, "timeframe": tf, "score": round(lv["score"] + weight.get(tf, 0), 1)}
+            if lv["price"] not in best or row["score"] > best[lv["price"]]["score"]:
+                best[lv["price"]] = row
+    levels = sorted(best.values(), key=lambda x: -x["score"])
     above = sorted((x for x in levels if x["side"] == "above"), key=lambda x: x["price"])[:5]
     below = sorted((x for x in levels if x["side"] == "below"), key=lambda x: -x["price"])[:5]
     return {

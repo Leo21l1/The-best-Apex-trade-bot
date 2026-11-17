@@ -4,7 +4,7 @@ import type {
   AccountStateResponse, Bar, ChartEvent, Instrument, LiveStatus, PaperState, RiskCheckResponse, Timeframe, TradePlanOut,
 } from "@apex/shared-types";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, Panel, QualityBadge, Stat } from "@/components/ui/primitives";
 import { usePolling } from "@/hooks/usePolling";
@@ -44,6 +44,16 @@ export function Terminal() {
   const [entry, setEntry] = useState("");
   const [stop, setStop] = useState("");
   const [target, setTarget] = useState("");
+  // Prefill from a confluence plan link (/terminal?symbol=NQ&side=sell&stop=..&target=..). Nothing is submitted.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    /* eslint-disable react-hooks/set-state-in-effect -- one-time read of the URL after mount */
+    if (q.get("symbol")) setSymbol(q.get("symbol")!.toUpperCase());
+    if (q.get("side")) setSide(q.get("side") === "sell" ? "short" : "long");
+    if (q.get("stop")) setStop(q.get("stop")!);
+    if (q.get("target")) setTarget(q.get("target")!);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
   const [thesis, setThesis] = useState("");
   const [preview, setPreview] = useState<RiskCheckResponse | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "err" | "info"; text: string; steps?: string[] } | null>(null);

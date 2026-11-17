@@ -45,6 +45,8 @@ class ConfluenceConfig:
     trigger_bars: int = 6
     #: Minimum reward:risk to the first target before a plan is shown as eligible.
     min_rr: float = 1.0
+    #: Stops closer than this many ATR(5m) are widened (a 1-tick stop is noise, not risk control).
+    min_stop_atr: float = 0.5
 
 
 def _sign(direction: str) -> int:
@@ -204,14 +206,18 @@ def _plan(
         lo, hi = sorted((price, price - s * 0.25 * atr_))
     refs = [p.invalidation_price for p in (zone, trig) if p is not None and p.invalidation_price is not None]
     refs = [r for r in refs if (price - r) * s > 0]
+    entry = rnd((lo + hi) / 2)
+    min_dist = max(cfg.min_stop_atr * atr_, 4 * tick)
     if refs:
         base = min(refs) if s == 1 else max(refs)
         stop = base - s * tick
         stop_basis = "beyond the zone/trigger invalidation level"
+        if (entry - stop) * s < min_dist:
+            stop = entry - s * min_dist
+            stop_basis = f"widened to the minimum {cfg.min_stop_atr} x ATR(5m); structural level was closer"
     else:
-        stop = price - s * 1.5 * atr_
+        stop = entry - s * 1.5 * atr_
         stop_basis = "1.5 x ATR(5m) (no structural level on the correct side)"
-    entry = rnd((lo + hi) / 2)
     stop = rnd(stop)
     risk = (entry - stop) * s
     targets = []

@@ -908,3 +908,129 @@ export interface ReplayData {
   hindsight: TradeReview["coaching"] | null;
   scenarios: Scenario[] | null;
 }
+
+// ---- Smart money concepts / confluence -------------------------------------------------------
+
+export type SmcDirection = "bullish" | "bearish" | "neutral";
+
+export interface SmcPattern {
+  id: string;
+  type: string;
+  direction: SmcDirection;
+  formed_at: string;
+  confirmed_at: string | null;
+  top: number;
+  bottom: number;
+  status: string;
+  invalidation: string;
+  invalidation_price: number | null;
+  evidence: string[];
+  quality: number;
+  extra: Record<string, unknown>;
+}
+
+export interface LiquidityLevel {
+  name: string;
+  price: number;
+  side: "above" | "below";
+  distance: number;
+  distance_atr: number;
+  touches: number;
+  formed_at: string;
+  score: number;
+  label: string;
+  timeframe?: string;
+}
+
+export interface SmcDataState {
+  available: boolean;
+  provider: string;
+  quality: string;
+  last_bar: string | null;
+  age_seconds: number | null;
+  stale: boolean;
+  price: number | null;
+}
+
+export interface SmcAnalysis {
+  symbol: string;
+  timeframe: string;
+  as_of: string | null;
+  bars: number;
+  atr: number | null;
+  trend: SmcDirection;
+  patterns: SmcPattern[];
+  swings: { time: string; kind: "high" | "low"; price: number; label: string; confirmed: boolean; confirmed_at: string | null }[];
+  indicators: Record<string, number | string | null>;
+  premium_discount: { range_high: number; range_low: number; equilibrium: number; position: number; zone: string; basis: string } | null;
+  liquidity: LiquidityLevel[];
+  disclaimer: string;
+  data: SmcDataState;
+}
+
+export interface ConfluenceFamily { family: "context" | "location" | "trigger"; vote: number; weight: number; evidence: string[] }
+
+export interface ConfluencePlan {
+  direction: "long" | "short";
+  entry_zone: [number, number];
+  entry: number;
+  entry_conditions: string[];
+  stop: number;
+  stop_basis: string;
+  targets: { price: number; basis: string }[];
+  reward_risk: number | null;
+  rr_ok: boolean;
+  invalidation: string;
+}
+
+export interface LiquidityMap {
+  price: number | null;
+  levels: LiquidityLevel[];
+  nearest_above: LiquidityLevel[];
+  nearest_below: LiquidityLevel[];
+  ranking: string;
+  label: string;
+}
+
+export interface Confluence {
+  symbol: string;
+  outcome: "BUY BIAS" | "SHORT BIAS" | "WAIT" | "NO TRADE";
+  headline: string;
+  confirmation_required: boolean | null;
+  score: number;
+  max_score: number;
+  families: ConfluenceFamily[];
+  gates: string[];
+  plan: ConfluencePlan | null;
+  news: { status: string; summary: string; events: { title: string; ts: string; importance: string }[] };
+  data: SmcDataState;
+  risk: { known: boolean; risk_budget: number | null; rules_verified: boolean; stale: boolean } | null;
+  timeframes: Record<string, { trend: SmcDirection; as_of: string | null; patterns: number }>;
+  validation: string;
+  method: string;
+  disclaimer: string;
+  liquidity: LiquidityMap;
+}
+
+export interface SmcScanCard {
+  symbol: string;
+  outcome: Confluence["outcome"];
+  headline: string;
+  direction: "long" | "short" | null;
+  setups: string[];
+  families: ConfluenceFamily[];
+  score: number;
+  max_score: number;
+  entry_zone: [number, number] | null;
+  stop: number | null;
+  invalidation: string | null;
+  targets: { price: number; basis: string }[];
+  reward_risk: number | null;
+  validation: string;
+  news: Confluence["news"];
+  risk: Confluence["risk"];
+  data: SmcDataState;
+  not_ranked_because: string[];
+}
+
+export interface SmcScan { as_of: string; ranked: SmcScanCard[]; watch: SmcScanCard[]; note: string }

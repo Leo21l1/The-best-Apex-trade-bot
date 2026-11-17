@@ -18,6 +18,8 @@ export const NAV: NavItem[] = [
     summary: "Explainable, evidence-ranked setups. May legitimately be empty." },
   { href: "/charts", label: "Advanced Charts", key: "c", group: "Markets", phase: 2,
     summary: "Candles, EMA/VWAP, levels, strategy signals and news markers, labelled with data class." },
+  { href: "/smc", label: "Smart Money Analysis", key: "x", group: "Markets", phase: 9,
+    summary: "Automatic liquidity sweeps, order blocks, fair value gaps, structure, liquidity map and multi-timeframe confluence." },
   { href: "/terminal", label: "Trading Terminal", key: "t", group: "Markets", phase: 8,
     summary: "Chart, order ticket, risk preview and paper execution. Live Apex orders stay disabled." },
   { href: "/copilot", label: "AI Copilot", key: "i", group: "Markets", phase: 5,
@@ -47,7 +49,7 @@ export const NAV: NavItem[] = [
 ];
 
 /** Pages whose phase is at or below this are implemented. */
-export const COMPLETED_PHASE = 8;
+export const COMPLETED_PHASE = 9;
 
 export const NAV_GROUPS = ["Markets", "Account", "Research", "System"] as const;
 
