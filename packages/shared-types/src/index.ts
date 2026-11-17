@@ -574,6 +574,10 @@ export interface BacktestMetrics {
   exposure: number | null;
   daily_sharpe_annualized: number | null;
   exit_reasons: Record<string, number>;
+  no_losing_trades?: boolean;
+  avg_hold_minutes?: number | null;
+  max_consecutive_wins?: number;
+  max_consecutive_losses?: number;
 }
 
 export interface BacktestTrade {
@@ -591,6 +595,19 @@ export interface BacktestTrade {
   commission: number;
   r: number;
   trading_day: string;
+  bars_held?: number;
+  session?: string;
+  weekday?: string;
+  hour_et?: number;
+  regime?: string;
+  stop_ticks?: number;
+  planned_rr?: number | null;
+  rvol?: number | null;
+}
+
+export interface SegmentRow {
+  key: string; trades: number; win_rate: number | null; profit_factor: number | null; expectancy_r: number | null;
+  net_profit: number; max_drawdown: number; avg_win: number | null; avg_loss: number | null; expectancy: number | null; small_sample: boolean;
 }
 
 export interface BacktestResult {
@@ -615,6 +632,8 @@ export interface BacktestResult {
   assumptions: string[];
   trades: BacktestTrade[];
   result_sha256: string;
+  segments?: { in_sample: Record<string, SegmentRow[]>; out_of_sample: Record<string, SegmentRow[]>; note: string };
+  execution_policy?: Record<string, string>;
 }
 
 export interface BacktestRun {
@@ -633,6 +652,10 @@ export interface BacktestRun {
   summary?: Pick<BacktestMetrics, "trades" | "win_rate" | "profit_factor" | "expectancy_r" | "net_profit" | "max_drawdown">;
   dataset_quality?: DataQuality;
   result?: BacktestResult;
+  progress?: { phase: string; at: string; bars?: number; first?: string; last?: string } | null;
+  started_at?: string | null;
+  elapsed_seconds?: number;
+  worker_note?: string;
 }
 
 export interface PaperOrder {

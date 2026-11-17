@@ -23,6 +23,7 @@ from __future__ import annotations
 import bisect
 import copy
 import hashlib
+import itertools
 import json
 import math
 import random
@@ -56,6 +57,9 @@ class BacktestParams:
     slippage_ticks: float = 1.0
     #: Optional override of the strategy's (target-1, target-2) R multiples; target-1 is used for exits.
     target_r: tuple[float, float] | None = None
+    #: Optional stop override: entry reference minus/plus ``stop_atr`` x ATR(14, 5m) at the signal.
+    #: The target is then ``target_r[0]`` (or the strategy's first R multiple) times that risk.
+    stop_atr: float | None = None
     #: Share of trading days (from the end) held out as out-of-sample.
     oos_fraction: float = 0.3
     walk_forward_folds: int = 4
@@ -81,6 +85,14 @@ class Trade:
     r: float
     trading_day: str
     bars_held: int
+    # Context at the signal (computed only from bars closed by then).
+    session: str = ""
+    weekday: str = ""
+    hour_et: int = 0
+    regime: str = "unknown"
+    stop_ticks: float = 0.0
+    planned_rr: float | None = None
+    rvol: float | None = None
 
 
 class _ReplayContext(MarketContext):
@@ -169,6 +181,105 @@ class Replayer:
         return ctx
 
 
+def _round_tick(x: float, tick: float) -> float:
+    return round(round(x / tick) * tick, 6)
+
+
+def _window_key(ts: datetime) -> str:
+    from app.services.session_intel import reference_window
+
+    return reference_window(ts)["key"]
+
+
+def _regime_label(closes: Sequence[float]) -> str:
+    """Efficiency ratio of recent 5m closes: >= 0.35 trending, < 0.15 choppy, otherwise ranging."""
+    if len(closes) < 6:
+        return "unknown"
+    path = sum(abs(b - a) for a, b in itertools.pairwise(closes))
+    if path <= 0:
+        return "flat"
+    er = abs(closes[-1] - closes[0]) / path
+    trend = "up" if closes[-1] > closes[0] else "down"
+    return f"trending {trend}" if er >= 0.35 else "choppy" if er < 0.15 else "ranging"
+
+
+def attach_rvol(trades: list[Trade], bars: Sequence[Bar], lookback: int = 20, min_sessions: int = 5) -> None:
+    """Relative volume of the signal's 5-minute bar vs the SAME New York clock bucket on up to
+    ``lookback`` PRIOR sessions (median). Fewer than ``min_sessions`` comparable sessions -> None."""
+    by: dict[tuple[str, str], int] = {}
+    for b in bars:
+        loc = b.ts.astimezone(ET)
+        bucket = f"{loc.hour:02d}:{loc.minute - loc.minute % 5:02d}"
+        key = (trading_day(b.ts).isoformat(), bucket)
+        by[key] = by.get(key, 0) + b.volume
+    days = sorted({d for d, _ in by})
+    for t in trades:
+        sig = datetime.fromisoformat(t.signal_ts) - timedelta(minutes=5)
+        loc = sig.astimezone(ET)
+        bucket = f"{loc.hour:02d}:{loc.minute - loc.minute % 5:02d}"
+        d = trading_day(sig).isoformat()
+        cur = by.get((d, bucket))
+        prior = [by[(x, bucket)] for x in days if x < d and (x, bucket) in by][-lookback:]
+        if cur is None or len(prior) < min_sessions:
+            continue
+        from statistics import median
+
+        base = median(prior)
+        t.rvol = round(cur / base, 2) if base > 0 else None
+
+
+def _bucket_rr(x: float | None) -> str:
+    return (
+        "unknown" if x is None else "< 1.0" if x < 1 else "1.0-1.5" if x < 1.5 else "1.5-2.5" if x < 2.5 else ">= 2.5"
+    )
+
+
+def _bucket_ticks(x: float) -> str:
+    return "<= 8 ticks" if x <= 8 else "8-16 ticks" if x <= 16 else "16-32 ticks" if x <= 32 else "> 32 ticks"
+
+
+def _bucket_rvol(x: float | None) -> str:
+    return (
+        "unknown (< 5 sessions)" if x is None else "low (< 0.8)" if x < 0.8 else "high (> 1.2)" if x > 1.2 else "normal"
+    )
+
+
+SEGMENT_DIMENSIONS: dict[str, Any] = {
+    "session": lambda t: t.session or "unknown",
+    "weekday": lambda t: t.weekday or "unknown",
+    "hour_et": lambda t: f"{t.hour_et:02d}:00",
+    "regime": lambda t: t.regime,
+    "direction": lambda t: t.direction,
+    "relative_volume": lambda t: _bucket_rvol(t.rvol),
+    "stop_distance": lambda t: _bucket_ticks(t.stop_ticks),
+    "planned_reward_risk": lambda t: _bucket_rr(t.planned_rr),
+    "exit_reason": lambda t: t.exit_reason,
+}
+
+
+def segments(trades: Sequence[Trade]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    for name, key in SEGMENT_DIMENSIONS.items():
+        groups: dict[str, list[Trade]] = {}
+        for t in trades:
+            groups.setdefault(key(t), []).append(t)
+        rows = []
+        for k, g in sorted(groups.items()):
+            m = metrics(g, len({t.trading_day for t in g}), 0)
+            rows.append(
+                {
+                    "key": k,
+                    **_brief(m),
+                    "avg_win": m["avg_win"],
+                    "avg_loss": m["avg_loss"],
+                    "expectancy": m["expectancy"],
+                    "small_sample": len(g) < 30,
+                }
+            )
+        out[name] = rows
+    return out
+
+
 def _strategy(params: BacktestParams) -> Strategy:
     base = STRATEGY_BY_ID[params.strategy_id]
     if params.target_r is None:
@@ -196,7 +307,8 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
         local = close_ts.astimezone(ET).time()
         if not (EVAL_START <= local <= EVAL_END) or (pos is not None and close_ts <= pos["exit_after"]):
             continue
-        ev = strategy.evaluate(rp.context(close_ts))
+        ctx = rp.context(close_ts)
+        ev = strategy.evaluate(ctx)
         sig = ev.signal
         if sig is None:
             continue
@@ -207,6 +319,13 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
         entry_bar = rp.bars[i]
         entry = entry_bar.open + s * slip
         stop, target = sig.stop, sig.targets[0]
+        if params.stop_atr:
+            a = ctx.atr14[-1] if ctx.atr14 else None
+            if not a:
+                continue  # no ATR yet: the override cannot be applied honestly
+            stop = _round_tick(sig.entry - s * params.stop_atr * a, tick)
+            rr1 = (params.target_r or strategy.target_r)[0]
+            target = _round_tick(sig.entry + s * rr1 * abs(sig.entry - stop), tick)
         if (entry - stop) * s <= 0 or (target - entry) * s <= 0:
             continue  # gapped beyond stop or target before entry: no trade
         exit_price = exit_reason = None
@@ -259,6 +378,12 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
                 else 0.0,
                 trading_day=trading_day(entry_bar.ts).isoformat(),
                 bars_held=j - i + 1,
+                session=_window_key(close_ts),
+                weekday=close_ts.astimezone(ET).strftime("%a"),
+                hour_et=close_ts.astimezone(ET).hour,
+                regime=_regime_label(ctx.closes[-24:]),
+                stop_ticks=round(abs(entry - stop) / tick, 1),
+                planned_rr=round(abs(target - entry) / abs(entry - stop), 2) if entry != stop else None,
             )
         )
         pos = {"exit_after": rp.bars[j].ts}
@@ -297,7 +422,9 @@ def metrics(trades: Sequence[Trade], trading_days: int, total_minutes: int) -> d
         "win_rate": round(len(wins) / n, 4) if n else None,
         "avg_win": round(gross_win / len(wins), 2) if wins else None,
         "avg_loss": round(-gross_loss / len(losses), 2) if losses else None,
-        "profit_factor": round(gross_win / gross_loss, 3) if gross_loss > 0 else (None if not wins else math.inf),
+        # No losing trades -> profit factor undefined (was math.inf, which PostgreSQL JSON rejects).
+        "profit_factor": round(gross_win / gross_loss, 3) if gross_loss > 0 else None,
+        "no_losing_trades": bool(wins) and gross_loss == 0,
         "expectancy": round(sum(t.pnl for t in trades) / n, 2) if n else None,
         "expectancy_r": round(mean_r, 4) if mean_r is not None else None,
         "t_stat_r": round(mean_r / (sd_r / math.sqrt(n)), 3) if sd_r else None,
@@ -308,10 +435,21 @@ def metrics(trades: Sequence[Trade], trading_days: int, total_minutes: int) -> d
         "trades_per_day": round(n / trading_days, 3) if trading_days else None,
         "exposure": round(sum(t.bars_held for t in trades) / total_minutes, 4) if total_minutes else None,
         "daily_sharpe_annualized": round(d_mean / d_sd * math.sqrt(252), 3) if d_sd > 0 else None,
+        "avg_hold_minutes": round(sum(t.bars_held for t in trades) / n, 1) if n else None,
+        "max_consecutive_wins": _streak(trades, True),
+        "max_consecutive_losses": _streak(trades, False),
         "exit_reasons": {
             k: sum(1 for t in trades if t.exit_reason == k) for k in ("stop", "target", "time", "data_end")
         },
     }
+
+
+def _streak(trades: Sequence[Trade], wins: bool) -> int:
+    best = cur = 0
+    for t in trades:
+        cur = cur + 1 if (t.pnl > 0) == wins else 0
+        best = max(best, cur)
+    return best
 
 
 def monte_carlo(trades: Sequence[Trade], runs: int, seed: int) -> dict[str, Any] | None:
@@ -412,6 +550,7 @@ def run_backtest(
     bars = list(bars)
     days = _days(bars)
     trades = simulate(params, bars)
+    attach_rvol(trades, bars)
     total_minutes = len(bars)
     full = metrics(trades, len(days), total_minutes)
 
@@ -492,14 +631,39 @@ def run_backtest(
             f"Flat by {FLAT_BY:%H:%M} ET; one position at a time; {params.quantity} contract(s)",
             "Indicators use a precomputed 120-hour window; the first bucket of each window may differ "
             "slightly from the live scanner's",
-            "No roll, spread or queue modelling beyond slippage; holidays not modelled",
+            "Continuous front-month bars; no roll, spread or queue modelling beyond slippage",
         ],
         "trades": [asdict(t) for t in trades],
+        "segments": {
+            "in_sample": segments([t for t in trades if t.trading_day in is_days]),
+            "out_of_sample": segments([t for t in trades if t.trading_day in oos_days]),
+            "note": "Segments with fewer than 30 trades are flagged small_sample; in-sample results are optimistic "
+            "by construction. Past performance does not predict future results.",
+        },
+        "execution_policy": {
+            "entry": "market at the next 1-minute bar open after the signal bar closes, plus slippage",
+            "stop": "triggered when a bar trades at/through it; fills at the stop or a gapped open, plus slippage",
+            "target": "limit filled only when price trades one tick THROUGH it, no slippage",
+            "both_in_one_bar": "stop assumed first (conservative)",
+            "time_exit": f"flat at the first bar at/after {FLAT_BY:%H:%M} ET or before a data gap",
+        },
     }
+    result = json_safe(result)
     result["result_sha256"] = hashlib.sha256(
         json.dumps({k: v for k, v in result.items() if k != "result_sha256"}, sort_keys=True, default=str).encode()
     ).hexdigest()
     return result
+
+
+def json_safe(x: Any) -> Any:
+    """Replace non-finite floats (inf / nan) with None so results are valid JSON for PostgreSQL."""
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if isinstance(x, dict):
+        return {k: json_safe(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [json_safe(v) for v in x]
+    return x
 
 
 def _brief(m: dict[str, Any]) -> dict[str, Any]:

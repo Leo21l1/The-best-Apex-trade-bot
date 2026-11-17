@@ -13,6 +13,8 @@ import logging
 import os
 import signal
 import time
+from datetime import datetime
+from typing import Any
 
 from redis.exceptions import RedisError
 
@@ -114,16 +116,93 @@ async def news_poll(stop: asyncio.Event) -> None:
                 pass
 
 
-async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
-    """Run queued backtests and advance paper accounts from newly stored bars."""
-    from datetime import UTC, datetime
+REVIEW_SKIP_KEY = "apex:review:skip:"
 
-    from sqlalchemy.exc import SQLAlchemyError
+
+async def lab_cycle(sm: Any, now: datetime | None = None) -> str:
+    """One pass of the lab job loop. Every unit of work is isolated: an exception in one backtest,
+    paper account or trade review is logged and recorded, and never stops the others.
+
+    Root cause of the stuck-backtest failure: the loop used to catch only SQLAlchemyError/OSError, so
+    any other exception (for example the trade-review KeyError on plan-linked imported trades) ended
+    the whole task silently; queued backtests then stayed 'queued' forever and paper fills and
+    journal reviews stopped as well.
+    """
+    from datetime import UTC
+    from datetime import datetime as dt
+
+    from sqlalchemy import select
 
     from app.marketdata.status import current_quality
-    from app.models.research import PaperAccount
+    from app.models.research import JournalTrade, PaperAccount
     from app.services.paper import process
-    from app.services.research import claim_next, execute_run, recover_stuck
+    from app.services.research import claim_next, execute_run
+    from app.services.trade_assistant import assist
+    from app.services.trade_review import review_trade
+
+    now = now or dt.now(UTC)
+    try:
+        from app.services.health import LAB_HEARTBEAT_KEY
+
+        await get_redis().set(LAB_HEARTBEAT_KEY, str(time.time()), ex=600)
+    except (RedisError, OSError):
+        pass
+    async with sm() as session:
+        run = await claim_next(session)
+    if run is not None:
+        quality, _ = await current_quality()
+        # Stored bars keep their class: simulated stays simulated even when the feed is down.
+        if get_settings().market_data_provider == "simulated":
+            quality = "simulated"
+        elif quality in ("unavailable", "live", "delayed"):
+            quality = "historical"
+        await execute_run(sm, run.id, quality)  # never raises: failures are stored on the run
+        return "backtest"
+    async with sm() as session:
+        for acct in (await session.scalars(select(PaperAccount))).all():
+            try:
+                await process(session, acct, now)
+                await assist(session, get_redis(), acct, get_settings(), now)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                log.exception("paper account job failed", extra={"account": acct.id})
+    async with sm() as session:
+        pending = (
+            await session.scalars(
+                select(JournalTrade.id).where(JournalTrade.review.is_(None)).order_by(JournalTrade.id).limit(25)
+            )
+        ).all()
+        done = 0
+        for tid in pending:
+            if done >= 10:
+                break
+            try:
+                if await get_redis().get(f"{REVIEW_SKIP_KEY}{tid}"):
+                    continue  # failed recently: retry after the skip expires, not every 2 seconds
+            except (RedisError, OSError):
+                pass
+            try:
+                t = await session.get(JournalTrade, tid)
+                if t is not None:
+                    await review_trade(session, t, get_settings())
+                    await session.commit()
+                    done += 1
+            except Exception:
+                await session.rollback()
+                log.exception("trade review failed", extra={"trade_id": tid})
+                try:
+                    await get_redis().set(f"{REVIEW_SKIP_KEY}{tid}", "1", ex=3600)
+                except (RedisError, OSError):
+                    pass
+    return "idle"
+
+
+async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
+    """Run queued backtests, advance paper accounts and journal new trades, forever."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.services.research import recover_stuck
 
     sm = get_sessionmaker()
     try:
@@ -133,39 +212,10 @@ async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
         log.exception("could not recover stuck backtests")
     while not stop.is_set():
         try:
-            async with sm() as session:
-                run = await claim_next(session)
-            if run is not None:
-                quality, _ = await current_quality()
-                # Stored bars keep their class: simulated stays simulated even when the feed is down.
-                if get_settings().market_data_provider == "simulated":
-                    quality = "simulated"
-                elif quality in ("unavailable", "live", "delayed"):
-                    quality = "historical"
-                await execute_run(sm, run.id, quality)
+            if await lab_cycle(sm) == "backtest":
                 continue
-            async with sm() as session:
-                from sqlalchemy import select
-
-                from app.models.research import JournalTrade
-                from app.services.trade_assistant import assist
-                from app.services.trade_review import review_trade
-
-                for acct in (await session.scalars(select(PaperAccount))).all():
-                    await process(session, acct, datetime.now(UTC))
-                    await assist(session, get_redis(), acct, get_settings(), datetime.now(UTC))
-                await session.commit()
-                # Journal every newly closed or imported trade automatically.
-                pending = (
-                    await session.scalars(
-                        select(JournalTrade).where(JournalTrade.review.is_(None)).order_by(JournalTrade.id).limit(10)
-                    )
-                ).all()
-                for t in pending:
-                    await review_trade(session, t, get_settings())
-                await session.commit()
-        except (SQLAlchemyError, OSError):
-            log.exception("lab job failed")
+        except Exception:  # the loop itself must survive anything (database restarts included)
+            log.exception("lab job cycle failed")
         try:
             await asyncio.wait_for(stop.wait(), interval_s)
         except TimeoutError:

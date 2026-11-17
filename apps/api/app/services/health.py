@@ -205,3 +205,28 @@ async def system_status() -> SystemStatus:
         market_data_provider=provider,
         components=components,
     )
+
+
+LAB_HEARTBEAT_KEY = "apex:worker:lab"
+
+
+async def worker_alive() -> bool:
+    """True when the worker's job loop (backtests, paper, reviews) is cycling.
+
+    The process heartbeat alone is not enough: the job loop could have died while the process kept
+    running. The loop writes its own heartbeat each cycle; during a long backtest the cycle is busy,
+    so a run in 'running' state also counts as alive.
+    """
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.research import BacktestRun
+
+    try:
+        raw = await get_redis().get(LAB_HEARTBEAT_KEY)
+        if raw and time.time() - float(raw) < 120:
+            return True
+    except (RedisError, OSError, ValueError):
+        return False
+    async with get_sessionmaker()() as s:
+        return (await s.scalar(select(BacktestRun.id).where(BacktestRun.status == "running").limit(1))) is not None

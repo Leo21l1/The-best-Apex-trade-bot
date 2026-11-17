@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
@@ -50,6 +51,7 @@ class BacktestIn(BaseModel):
     commission_per_side: float | None = Field(default=None, ge=0, le=50)
     slippage_ticks: float | None = Field(default=None, ge=0, le=20)
     target_r: float | None = Field(default=None, gt=0.2, le=10)
+    stop_atr: float | None = Field(default=None, gt=0.1, le=10)
 
     @field_validator("start", "end")
     @classmethod
@@ -99,6 +101,15 @@ async def create_backtest(body: BacktestIn, user: AdminUser, request: Request, s
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"{sym} is not eligible for {body.strategy_id}")
     if body.end <= body.start or body.end - body.start > timedelta(days=400):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Range must be positive and at most 400 days")
+    from app.research.scanner import load_bars
+
+    n_bars = len(await load_bars(session, s.market_data_provider, sym, body.start, body.end))
+    if n_bars < 1000:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Only {n_bars} stored 1-minute {s.market_data_provider} bars for {sym} in this range (need >= 1000). "
+            "Check coverage with GET /api/backtests/coverage or backfill history first.",
+        )
     inst = INSTRUMENTS[sym]
     params = BacktestParams(
         strategy_id=body.strategy_id,
@@ -109,6 +120,7 @@ async def create_backtest(body: BacktestIn, user: AdminUser, request: Request, s
         else (s.cost_commission_per_side_micro if inst.is_micro else s.cost_commission_per_side_standard),
         slippage_ticks=body.slippage_ticks if body.slippage_ticks is not None else s.cost_slippage_ticks_per_side,
         target_r=(body.target_r, body.target_r + 1) if body.target_r else None,
+        stop_atr=body.stop_atr,
     )
     run = BacktestRun(
         status="queued",
@@ -140,15 +152,100 @@ async def list_backtests(
     _: CurrentUser, session: SessionDep, limit: Annotated[int, Query(ge=1, le=200)] = 50
 ) -> list[dict[str, Any]]:
     rows = (await session.scalars(select(BacktestRun).order_by(BacktestRun.id.desc()).limit(limit))).all()
-    return [_run_out(r, False) for r in rows]
+    return await _with_status(list(rows), False)
+
+
+async def _with_status(rows: list[BacktestRun], full: bool) -> list[dict[str, Any]]:
+    """Attach progress (phase written by the worker) and an honest worker-health note."""
+    import json as _json
+
+    from app.core.redis import get_redis
+    from app.services.health import worker_alive
+    from app.services.research import PROGRESS_KEY
+
+    alive = await worker_alive()
+    now = datetime.now(UTC)
+    out = []
+    for r in rows:
+        d = _run_out(r, full)
+        try:
+            raw = await get_redis().get(f"{PROGRESS_KEY}{r.id}")
+            d["progress"] = _json.loads(raw) if raw else None
+        except Exception:
+            d["progress"] = None
+        d["started_at"] = r.started_at.isoformat() if r.started_at else None
+        if r.status in ("queued", "running"):
+            since = r.started_at or r.created_at
+            d["elapsed_seconds"] = int((now - since).total_seconds())
+            if not alive:
+                d["worker_note"] = "The background worker is not reporting; queued runs will not start until it is."
+        out.append(d)
+    return out
+
+
+@router.get("/backtests/coverage")
+async def backtest_coverage(
+    _: CurrentUser, session: SessionDep, symbol: str, start: datetime, end: datetime
+) -> dict[str, Any]:
+    """Stored-data coverage for a proposed backtest range (no download is triggered)."""
+    from app.marketdata.calendar import trading_day
+    from app.research.scanner import load_bars
+
+    s = get_settings()
+    sym = symbol.upper()
+    if sym not in INSTRUMENTS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown symbol")
+    bars = await load_bars(session, s.market_data_provider, sym, start, end) if s.market_data_provider != "none" else []
+    sessions = sorted({trading_day(b.ts).isoformat() for b in bars})
+    return {
+        "symbol": sym,
+        "provider": s.market_data_provider,
+        "bars": len(bars),
+        "sessions": len(sessions),
+        "first": bars[0].ts.isoformat() if bars else None,
+        "last": bars[-1].ts.isoformat() if bars else None,
+        "enough": len(bars) >= 1000,
+        "note": None if len(bars) >= 1000 else "At least 1000 stored 1-minute bars are required to run.",
+    }
+
+
+@router.get("/backtests/compare")
+async def compare_backtests(_: CurrentUser, session: SessionDep, ids: str) -> list[dict[str, Any]]:
+    try:
+        wanted = [int(x) for x in ids.split(",") if x.strip()][:4]
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "ids must be comma-separated integers") from exc
+    rows = [r for r in (await session.scalars(select(BacktestRun).where(BacktestRun.id.in_(wanted)))).all()]
+    out = []
+    for r in sorted(rows, key=lambda x: wanted.index(x.id)):
+        res = r.result or {}
+        out.append(
+            {
+                "id": r.id,
+                "strategy_id": r.strategy_id,
+                "symbol": r.symbol,
+                "status": r.status,
+                "start": r.start.isoformat(),
+                "end": r.end.isoformat(),
+                "params": r.params,
+                "metrics": res.get("metrics"),
+                "in_sample": res.get("in_sample"),
+                "out_of_sample": res.get("out_of_sample"),
+                "validation": res.get("validation"),
+                "dataset": res.get("dataset"),
+            }
+        )
+    return out
 
 
 @router.get("/backtests/{run_id}")
-async def get_backtest(run_id: int, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
+async def get_backtest(
+    run_id: Annotated[int, PathParam(ge=1, le=2_147_483_647)], _: CurrentUser, session: SessionDep
+) -> dict[str, Any]:
     r = await session.get(BacktestRun, run_id)
     if r is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Backtest not found")
-    return _run_out(r, True)
+    return (await _with_status([r], True))[0]
 
 
 # --- paper trading ---------------------------------------------------------------------------
