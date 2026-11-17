@@ -190,10 +190,10 @@ function Result({ run }: { run: BacktestRun }) {
           <Stat label="Expectancy" value={money(m.expectancy)} hint={`${num(m.expectancy_r, 3)} R`} />
           <Stat label="Net after costs" value={<span className={m.net_profit >= 0 ? "text-up" : "text-down"}>{money(m.net_profit)}</span>} hint={`commission ${money(m.total_commission)}`} />
           <Stat label="Max drawdown" value={money(m.max_drawdown)} hint={`${num(m.max_drawdown_r)} R`} />
-          <Stat label="Avg win / loss" value={`${money(m.avg_win)} / ${money(m.avg_loss)}`} />
+          <Stat label="Avg win" value={money(m.avg_win)} hint={`avg loss ${money(m.avg_loss)}`} />
           <Stat label="Exposure" value={pct(m.exposure)} />
           <Stat label="Daily Sharpe (ann.)" value={num(m.daily_sharpe_annualized)} />
-          <Stat label="Exits" value={Object.entries(m.exit_reasons).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ") || "—"} />
+          <Stat label="Exits" value={m.trades} hint={Object.entries(m.exit_reasons).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(" · ") || "—"} />
         </div>
         <div className="mt-4"><EquityChart points={points} /></div>
         <p className="mt-2 text-[11px] text-faint">
@@ -213,7 +213,7 @@ function Result({ run }: { run: BacktestRun }) {
             {r.multiple_testing.significant_after_adjustment ? "significant" : "not significant"}.
           </p>
         </Panel>
-        <Panel title="In-sample vs out-of-sample and walk-forward">
+        <Panel title="In-sample vs out-of-sample and walk-forward" className="xl:col-span-2">
           <div className="-mx-4 overflow-x-auto">
             <table className="w-full min-w-[480px]">
               <thead><tr className="text-left text-[11px] text-faint">{["", "Trades", "Win", "PF", "Exp R", "Net", "Max DD"].map((h) => <th key={h} className="px-2 py-1 font-medium first:pl-4">{h}</th>)}</tr></thead>

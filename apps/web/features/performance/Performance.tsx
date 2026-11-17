@@ -55,7 +55,7 @@ export function Performance() {
               <Stat label="Net P&L" value={<span className={a.overall.net_pnl >= 0 ? "text-up" : "text-down"}>{money(a.overall.net_pnl, true)}</span>} />
               <Stat label="Win rate" value={pct(a.overall.win_rate)} />
               <Stat label="Profit factor" value={a.overall.profit_factor?.toFixed(2) ?? "—"} />
-              <Stat label="Avg win / loss" value={`${money(a.overall.avg_win)} / ${money(a.overall.avg_loss)}`} />
+              <Stat label="Avg win" value={money(a.overall.avg_win)} hint={`avg loss ${money(a.overall.avg_loss)}`} />
               <Stat label="Max drawdown" value={money(a.overall.max_drawdown)} />
             </div>
           </Panel>
