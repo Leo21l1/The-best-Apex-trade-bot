@@ -53,6 +53,16 @@ def test_no_live_order_routing_code(pattern: str) -> None:
     assert hits == [], f"Forbidden live-execution pattern {pattern!r} found in {hits}"
 
 
+def test_paper_and_backtest_modules_cannot_reach_any_broker() -> None:
+    """The simulator and backtester are pure: no HTTP/WebSocket clients, sockets or broker names."""
+    banned = ("import httpx", "import requests", "aiohttp", "websocket", "import socket", "urllib", "tradovate",
+              "anthropic")
+    for rel in ("paper/engine.py", "paper/__init__.py", "research/backtest.py", "services/paper.py"):
+        src = (APP_DIR / rel).read_text().lower()
+        hits = [b for b in banned if b in src]
+        assert hits == [], f"{rel} references {hits}"
+
+
 def test_guard_constants() -> None:
     assert LIVE_ORDER_ROUTING_ENABLED is False
     with pytest.raises(LiveExecutionForbiddenError):

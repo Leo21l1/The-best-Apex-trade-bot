@@ -1,0 +1,506 @@
+"""Event-driven backtesting engine.
+
+The engine replays stored 1-minute bars and evaluates the SAME strategy code the live scanner runs.
+At each 5-minute close it builds a ``MarketContext`` containing only bars that had closed by then
+(no look-ahead); orders are filled on later 1-minute bars with deliberately conservative rules:
+
+* entry: market order at the open of the next 1-minute bar, plus adverse slippage;
+* stop: triggered when a bar trades at or through it; filled at the stop or, if the bar opened
+  beyond it (gap), at that bar's open; plus adverse slippage;
+* target: a limit order filled only if price trades THROUGH it by at least one tick (touching is
+  not enough), no slippage;
+* stop and target inside the same bar: the stop is assumed to fill first;
+* time exit: at the open of the first bar at or after 15:55 ET, or at the last close before a data
+  gap / session end, plus slippage;
+* one position at a time per run; commission charged per side per contract.
+
+Everything is deterministic: the same bars and parameters always produce the same result, and the
+result records a fingerprint of the dataset it ran on.
+"""
+
+from __future__ import annotations
+
+import bisect
+import copy
+import hashlib
+import json
+import math
+import random
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from datetime import datetime, time, timedelta
+from typing import Any
+
+from app.marketdata.calendar import ET, trading_day
+from app.marketdata.instruments import INSTRUMENTS
+from app.marketdata.types import Timeframe
+from app.research.bars import Bar, aggregate
+from app.research.indicators import OPENING_RANGE_MINUTES, Levels
+from app.research.validation import STANDARDS, ValidationStandards
+from app.strategies.base import MarketContext, Strategy
+from app.strategies.library import STRATEGY_BY_ID
+
+ENGINE_VERSION = "1.0"
+EVAL_START = time(9, 35)
+EVAL_END = time(15, 30)
+FLAT_BY = time(15, 55)
+LOOKBACK = timedelta(hours=120)  # same window the live scanner uses
+
+
+@dataclass(frozen=True)
+class BacktestParams:
+    strategy_id: str
+    symbol: str
+    quantity: int = 1
+    commission_per_side: float = 2.50
+    slippage_ticks: float = 1.0
+    #: Optional override of the strategy's (target-1, target-2) R multiples; target-1 is used for exits.
+    target_r: tuple[float, float] | None = None
+    #: Share of trading days (from the end) held out as out-of-sample.
+    oos_fraction: float = 0.3
+    walk_forward_folds: int = 4
+    monte_carlo_runs: int = 1000
+    seed: int = 7
+
+
+@dataclass
+class Trade:
+    direction: str
+    signal_ts: str
+    entry_ts: str
+    exit_ts: str
+    signal_entry: float
+    entry: float
+    stop: float
+    target: float
+    exit: float
+    exit_reason: str  # stop | target | time | data_end
+    quantity: int
+    pnl: float  # after commission
+    commission: float
+    r: float
+    trading_day: str
+    bars_held: int
+
+
+class _ReplayContext(MarketContext):
+    """MarketContext backed by precomputed, prefix-sliced series (identical rules, much faster)."""
+
+
+def _fingerprint(bars: Sequence[Bar]) -> dict[str, Any]:
+    h = hashlib.sha256()
+    for b in bars:
+        h.update(f"{b.ts.isoformat()}|{b.open}|{b.high}|{b.low}|{b.close}|{b.volume};".encode())
+    return {
+        "bars": len(bars),
+        "first": bars[0].ts.isoformat() if bars else None,
+        "last": bars[-1].ts.isoformat() if bars else None,
+        "sha256": h.hexdigest(),
+    }
+
+
+class Replayer:
+    """Holds precomputed series so each evaluation step is cheap."""
+
+    def __init__(self, symbol: str, bars: Sequence[Bar]) -> None:
+        self.symbol = symbol
+        self.bars = list(bars)
+        self.times = [b.ts for b in self.bars]
+        self.series = {tf: aggregate(self.bars, tf) for tf in (Timeframe.M5, Timeframe.M15, Timeframe.H1)}
+        self.series_times = {tf: [b.ts for b in s] for tf, s in self.series.items()}
+        # Per-bar calendar facts, computed once (the live code derives them per call).
+        self.day = [trading_day(t) for t in self.times]
+        self.local = [t.astimezone(ET) for t in self.times]
+        self.rth = [lt.weekday() < 5 and time(9, 30) <= lt.time() < time(16, 0) for lt in self.local]
+        self.day_range: dict[Any, tuple[int, int]] = {}
+        for idx, d in enumerate(self.day):
+            first, _ = self.day_range.get(d, (idx, idx))
+            self.day_range[d] = (first, idx)
+        self.days_sorted = sorted(self.day_range)
+
+    def levels(self, now: datetime, lo: int, hi: int) -> Levels:
+        """Same result as ``reference_levels(self.bars[lo:hi], now)``, using precomputed day ranges."""
+        today = trading_day(now)
+        pdh = pdl = pdc = onh = onl = orh = orl = None
+        k = bisect.bisect_left(self.days_sorted, today) - 1
+        while k >= 0:
+            d = self.days_sorted[k]
+            a, b = self.day_range[d]
+            a, b = max(a, lo), min(b, hi - 1)
+            rth = [i for i in range(a, b + 1) if self.rth[i]]
+            if rth:
+                pdh = max(self.bars[i].high for i in rth)
+                pdl = min(self.bars[i].low for i in rth)
+                pdc = self.bars[rth[-1]].close
+                break
+            if b < lo:
+                break
+            k -= 1
+        or_end = None
+        if today in self.day_range:
+            a, b = self.day_range[today]
+            a, b = max(a, lo), min(b, hi - 1)
+            for i in range(a, b + 1):
+                bar = self.bars[i]
+                lt = self.local[i].time()
+                if not self.rth[i] and (lt >= time(18, 0) or lt < time(9, 30)):
+                    onh = bar.high if onh is None else max(onh, bar.high)
+                    onl = bar.low if onl is None else min(onl, bar.low)
+                elif self.rth[i]:
+                    start = self.local[i].replace(hour=9, minute=30, second=0, microsecond=0)
+                    or_end = start + timedelta(minutes=OPENING_RANGE_MINUTES)
+                    if bar.ts < or_end:
+                        orh = bar.high if orh is None else max(orh, bar.high)
+                        orl = bar.low if orl is None else min(orl, bar.low)
+        complete = or_end is not None and now >= or_end and orh is not None
+        return Levels(pdh, pdl, pdc, onh, onl, orh, orl, complete)
+
+    def context(self, now: datetime) -> MarketContext:
+        lo = bisect.bisect_left(self.times, now - LOOKBACK)
+        hi = bisect.bisect_left(self.times, now)  # bars that opened before `now` (all closed)
+        ctx = _ReplayContext(self.symbol, now, self.bars[lo:hi])
+        ctx.__dict__["levels"] = self.levels(now, lo, hi)  # pre-fill the cached property
+        start = now - LOOKBACK
+        for tf, series in self.series.items():
+            ts = self.series_times[tf]
+            a = bisect.bisect_left(ts, start)
+            b = bisect.bisect_right(ts, now - tf.delta)  # only buckets fully closed by `now`
+            ctx._cache[tf] = series[a:b]
+        return ctx
+
+
+def _strategy(params: BacktestParams) -> Strategy:
+    base = STRATEGY_BY_ID[params.strategy_id]
+    if params.target_r is None:
+        return base
+    s = copy.copy(base)
+    s.target_r = params.target_r
+    return s
+
+
+def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
+    """Run one configuration over ascending 1-minute bars and return the trades."""
+    inst = INSTRUMENTS[params.symbol]
+    tick = float(inst.tick_size)
+    point_value = float(inst.point_value)
+    slip = params.slippage_ticks * tick
+    strategy = _strategy(params)
+    rp = Replayer(params.symbol, bars)
+    trades: list[Trade] = []
+    i = 0
+    n = len(rp.bars)
+    m5_closes = [b.ts + Timeframe.M5.delta for b in rp.series[Timeframe.M5]]
+    pos: dict[str, Any] | None = None
+
+    for close_ts in m5_closes:
+        local = close_ts.astimezone(ET).time()
+        if not (EVAL_START <= local <= EVAL_END) or (pos is not None and close_ts <= pos["exit_after"]):
+            continue
+        ev = strategy.evaluate(rp.context(close_ts))
+        sig = ev.signal
+        if sig is None:
+            continue
+        i = bisect.bisect_left(rp.times, close_ts)
+        if i >= n or rp.times[i] - close_ts > timedelta(minutes=2):
+            continue  # no next bar to fill on (session end / data gap)
+        s = 1 if sig.direction == "long" else -1
+        entry_bar = rp.bars[i]
+        entry = entry_bar.open + s * slip
+        stop, target = sig.stop, sig.targets[0]
+        if (entry - stop) * s <= 0 or (target - entry) * s <= 0:
+            continue  # gapped beyond stop or target before entry: no trade
+        exit_price = exit_reason = None
+        j = i
+        while j < n:
+            b = rp.bars[j]
+            if j > i and b.ts - rp.bars[j - 1].ts > timedelta(minutes=2):
+                exit_price, exit_reason, j = rp.bars[j - 1].close - s * slip, "data_end", j - 1
+                break
+            if b.ts.astimezone(ET).time() >= FLAT_BY:
+                exit_price, exit_reason = b.open - s * slip, "time"
+                break
+            hit_stop = b.low <= stop if s == 1 else b.high >= stop
+            hit_target = b.high >= target + tick if s == 1 else b.low <= target - tick
+            if hit_stop:
+                gap = b.open < stop if s == 1 else b.open > stop
+                exit_price, exit_reason = (b.open if gap else stop) - s * slip, "stop"
+                break
+            if hit_target:
+                exit_price, exit_reason = target, "target"
+                break
+            j += 1
+        if exit_price is None:
+            j = n - 1
+            exit_price, exit_reason = rp.bars[j].close - s * slip, "data_end"
+        commission = 2 * params.commission_per_side * params.quantity
+        risk = abs(entry - stop)
+        pnl = (exit_price - entry) * s * point_value * params.quantity - commission
+        trades.append(
+            Trade(
+                direction=sig.direction,
+                signal_ts=close_ts.isoformat(),
+                entry_ts=entry_bar.ts.isoformat(),
+                exit_ts=rp.bars[j].ts.isoformat(),
+                signal_entry=sig.entry,
+                entry=round(entry, 6),
+                stop=stop,
+                target=target,
+                exit=round(exit_price, 6),
+                exit_reason=exit_reason,
+                quantity=params.quantity,
+                pnl=round(pnl, 2),
+                commission=round(commission, 2),
+                r=round(
+                    ((exit_price - entry) * s * point_value * params.quantity - commission)
+                    / (risk * point_value * params.quantity),
+                    4,
+                )
+                if risk > 0
+                else 0.0,
+                trading_day=trading_day(entry_bar.ts).isoformat(),
+                bars_held=j - i + 1,
+            )
+        )
+        pos = {"exit_after": rp.bars[j].ts}
+    return trades
+
+
+# --- metrics ---------------------------------------------------------------------------------
+
+
+def metrics(trades: Sequence[Trade], trading_days: int, total_minutes: int) -> dict[str, Any]:
+    n = len(trades)
+    wins = [t.pnl for t in trades if t.pnl > 0]
+    losses = [t.pnl for t in trades if t.pnl <= 0]
+    gross_win, gross_loss = sum(wins), -sum(losses)
+    equity = peak = max_dd = 0.0
+    for t in trades:
+        equity += t.pnl
+        peak = max(peak, equity)
+        max_dd = max(max_dd, peak - equity)
+    r_values = [t.r for t in trades]
+    mean_r = sum(r_values) / n if n else None
+    sd_r = math.sqrt(sum((r - mean_r) ** 2 for r in r_values) / (n - 1)) if n > 1 and mean_r is not None else None
+    r_equity = r_peak = max_dd_r = 0.0
+    for r in r_values:
+        r_equity += r
+        r_peak = max(r_peak, r_equity)
+        max_dd_r = max(max_dd_r, r_peak - r_equity)
+    daily: dict[str, float] = {}
+    for t in trades:
+        daily[t.trading_day] = daily.get(t.trading_day, 0.0) + t.pnl
+    d = list(daily.values()) + [0.0] * max(trading_days - len(daily), 0)
+    d_mean = sum(d) / len(d) if d else 0.0
+    d_sd = math.sqrt(sum((x - d_mean) ** 2 for x in d) / (len(d) - 1)) if len(d) > 1 else 0.0
+    return {
+        "trades": n,
+        "win_rate": round(len(wins) / n, 4) if n else None,
+        "avg_win": round(gross_win / len(wins), 2) if wins else None,
+        "avg_loss": round(-gross_loss / len(losses), 2) if losses else None,
+        "profit_factor": round(gross_win / gross_loss, 3) if gross_loss > 0 else (None if not wins else math.inf),
+        "expectancy": round(sum(t.pnl for t in trades) / n, 2) if n else None,
+        "expectancy_r": round(mean_r, 4) if mean_r is not None else None,
+        "t_stat_r": round(mean_r / (sd_r / math.sqrt(n)), 3) if sd_r else None,
+        "net_profit": round(sum(t.pnl for t in trades), 2),
+        "total_commission": round(sum(t.commission for t in trades), 2),
+        "max_drawdown": round(max_dd, 2),
+        "max_drawdown_r": round(max_dd_r, 3),
+        "trades_per_day": round(n / trading_days, 3) if trading_days else None,
+        "exposure": round(sum(t.bars_held for t in trades) / total_minutes, 4) if total_minutes else None,
+        "daily_sharpe_annualized": round(d_mean / d_sd * math.sqrt(252), 3) if d_sd > 0 else None,
+        "exit_reasons": {
+            k: sum(1 for t in trades if t.exit_reason == k) for k in ("stop", "target", "time", "data_end")
+        },
+    }
+
+
+def monte_carlo(trades: Sequence[Trade], runs: int, seed: int) -> dict[str, Any] | None:
+    """Bootstrap the trade P&L sequence: distribution of net profit and max drawdown."""
+    if len(trades) < 10:
+        return None
+    rng = random.Random(seed)  # noqa: S311 - seeded, reproducible resampling; not security-related
+    pnl = [t.pnl for t in trades]
+    finals, dds = [], []
+    for _ in range(runs):
+        sample = [pnl[rng.randrange(len(pnl))] for _ in pnl]
+        eq = pk = dd = 0.0
+        for x in sample:
+            eq += x
+            pk = max(pk, eq)
+            dd = max(dd, pk - eq)
+        finals.append(eq)
+        dds.append(dd)
+    finals.sort()
+    dds.sort()
+
+    def pct(a: list[float], p: float) -> float:
+        return round(a[min(len(a) - 1, int(p * len(a)))], 2)
+
+    return {
+        "runs": runs,
+        "seed": seed,
+        "net_profit": {"p5": pct(finals, 0.05), "p50": pct(finals, 0.5), "p95": pct(finals, 0.95)},
+        "max_drawdown": {"p50": pct(dds, 0.5), "p95": pct(dds, 0.95), "p99": pct(dds, 0.99)},
+        "probability_of_loss": round(sum(1 for f in finals if f < 0) / runs, 4),
+    }
+
+
+def _days(bars: Sequence[Bar]) -> list[str]:
+    return sorted({trading_day(b.ts).isoformat() for b in bars})
+
+
+def evaluate_validation(
+    in_sample: dict[str, Any],
+    oos: dict[str, Any],
+    folds: list[dict[str, Any]],
+    full: dict[str, Any],
+    quality: str,
+    standards: ValidationStandards = STANDARDS,
+) -> dict[str, Any]:
+    checks = []
+
+    def check(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": name, "passed": bool(ok), "detail": detail})
+
+    check(
+        "real historical data",
+        quality in ("historical", "live", "delayed"),
+        f"dataset class is {quality}; simulated data can never validate a strategy",
+    )
+    check(f"at least {standards.min_trades} trades", full["trades"] >= standards.min_trades, f"{full['trades']} trades")
+    check(
+        f"at least {standards.min_out_of_sample_trades} out-of-sample trades",
+        oos["trades"] >= standards.min_out_of_sample_trades,
+        f"{oos['trades']} out-of-sample trades",
+    )
+    pf = oos["profit_factor"]
+    check(
+        f"out-of-sample profit factor >= {standards.min_profit_factor}",
+        pf is not None and pf >= standards.min_profit_factor,
+        f"{pf}",
+    )
+    er = oos["expectancy_r"]
+    check(
+        f"out-of-sample expectancy >= {standards.min_expectancy_r}R",
+        er is not None and er >= standards.min_expectancy_r,
+        f"{er}R",
+    )
+    check(
+        f"max drawdown <= {standards.max_drawdown_r}R",
+        full["max_drawdown_r"] <= standards.max_drawdown_r,
+        f"{full['max_drawdown_r']}R",
+    )
+    profitable = sum(1 for f in folds if (f["metrics"]["net_profit"] or 0) > 0)
+    need = math.ceil(0.6 * len(folds)) if folds else 1
+    check(
+        "walk-forward: profitable in >= 60% of folds",
+        standards.require_walk_forward is False or (folds and profitable >= need),
+        f"{profitable} of {len(folds)} folds profitable",
+    )
+    return {"passed": all(c["passed"] for c in checks), "checks": checks}
+
+
+def run_backtest(
+    params: BacktestParams, bars: Sequence[Bar], quality: str, prior_configs: int = 0, sensitivity: bool = True
+) -> dict[str, Any]:
+    """Full experiment: base run, in-sample / out-of-sample split, walk-forward folds, Monte Carlo,
+    parameter sensitivity and validation against the research standards."""
+    if params.strategy_id not in STRATEGY_BY_ID:
+        raise ValueError("unknown strategy")
+    if params.symbol not in STRATEGY_BY_ID[params.strategy_id].spec.eligible_instruments:
+        raise ValueError(f"{params.symbol} is not eligible for {params.strategy_id}")
+    bars = list(bars)
+    days = _days(bars)
+    trades = simulate(params, bars)
+    total_minutes = len(bars)
+    full = metrics(trades, len(days), total_minutes)
+
+    split = int(len(days) * (1 - params.oos_fraction))
+    is_days, oos_days = set(days[:split]), set(days[split:])
+    in_sample = metrics([t for t in trades if t.trading_day in is_days], len(is_days), total_minutes)
+    oos = metrics([t for t in trades if t.trading_day in oos_days], len(oos_days), total_minutes)
+
+    folds = []
+    k = max(1, min(params.walk_forward_folds, len(days)))
+    size = math.ceil(len(days) / k) if days else 0
+    for f in range(k):
+        fd = set(days[f * size : (f + 1) * size])
+        if not fd:
+            continue
+        folds.append(
+            {
+                "fold": f + 1,
+                "first_day": min(fd),
+                "last_day": max(fd),
+                "metrics": metrics([t for t in trades if t.trading_day in fd], len(fd), total_minutes),
+            }
+        )
+
+    sens: list[dict[str, Any]] = []
+    configs = 1
+    if sensitivity and trades:
+        base_targets = STRATEGY_BY_ID[params.strategy_id].target_r
+        for tr in (1.0, 2.0, 3.0):
+            if tr == (params.target_r or base_targets)[0]:
+                continue
+            p = BacktestParams(**{**asdict(params), "target_r": (tr, tr + 1)})
+            sens.append({"variant": f"target {tr}R", **_brief(metrics(simulate(p, bars), len(days), total_minutes))})
+            configs += 1
+        for sl in (0.0, 2.0):
+            if sl == params.slippage_ticks:
+                continue
+            p = BacktestParams(**{**asdict(params), "slippage_ticks": sl})
+            sens.append(
+                {"variant": f"slippage {sl:g} tick", **_brief(metrics(simulate(p, bars), len(days), total_minutes))}
+            )
+            configs += 1
+
+    tested = prior_configs + configs
+    t_stat = full["t_stat_r"]
+    # Bonferroni: two-sided 5% significance across every configuration tried for this strategy.
+    from statistics import NormalDist
+
+    z_needed = NormalDist().inv_cdf(1 - 0.05 / (2 * max(tested, 1)))
+    validation = evaluate_validation(in_sample, oos, folds, full, quality)
+    result = {
+        "engine_version": ENGINE_VERSION,
+        "params": asdict(params),
+        "dataset": {**_fingerprint(bars), "quality": quality, "trading_days": len(days)},
+        "metrics": full,
+        "in_sample": in_sample,
+        "out_of_sample": oos,
+        "split": {
+            "in_sample_days": len(is_days),
+            "out_of_sample_days": len(oos_days),
+            "first_oos_day": min(oos_days) if oos_days else None,
+        },
+        "walk_forward": folds,
+        "monte_carlo": monte_carlo(trades, params.monte_carlo_runs, params.seed),
+        "sensitivity": sens,
+        "multiple_testing": {
+            "configurations_tested": tested,
+            "t_stat_r": t_stat,
+            "z_required_bonferroni": round(z_needed, 3),
+            "significant_after_adjustment": t_stat is not None and t_stat >= z_needed,
+            "note": "Counts every configuration run for this strategy (this and earlier experiments).",
+        },
+        "validation": validation,
+        "assumptions": [
+            "Market entry at next 1-minute bar open plus slippage",
+            "Targets need a one-tick trade-through; stop assumed first when both are hit in one bar",
+            "Gaps through the stop fill at the bar open",
+            f"Flat by {FLAT_BY:%H:%M} ET; one position at a time; {params.quantity} contract(s)",
+            "Indicators use a precomputed 120-hour window; the first bucket of each window may differ "
+            "slightly from the live scanner's",
+            "No roll, spread or queue modelling beyond slippage; holidays not modelled",
+        ],
+        "trades": [asdict(t) for t in trades],
+    }
+    result["result_sha256"] = hashlib.sha256(
+        json.dumps({k: v for k, v in result.items() if k != "result_sha256"}, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    return result
+
+
+def _brief(m: dict[str, Any]) -> dict[str, Any]:
+    return {k: m[k] for k in ("trades", "win_rate", "profit_factor", "expectancy_r", "net_profit", "max_drawdown")}

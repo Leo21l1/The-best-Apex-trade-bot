@@ -244,9 +244,9 @@ async def get_opportunities(ctx: ToolContext, args: dict[str, Any]) -> dict[str,
         )
     return {
         "data_class": "statistical_estimate",
-        "note": "Research candidates from unvalidated strategies. Setup score is a checklist, NOT a "
-        "probability. No historical expectancy exists. Ranked opportunities: none.",
-        "ranked_count": 0,
+        "note": "Research candidates as stored at detection time. Setup score is a checklist, NOT a probability. "
+        "Ranking needs a validated strategy, live/delayed data, a verified rule profile and a passing risk check "
+        "(see the Opportunity Leaderboard for current ranking).",
         "candidates": items,
     }
 
@@ -256,6 +256,9 @@ async def get_strategy_specs(ctx: ToolContext, args: dict[str, Any]) -> dict[str
     strategies = [STRATEGY_BY_ID[sid]] if sid in STRATEGY_BY_ID else list(STRATEGIES)
     if sid and sid not in STRATEGY_BY_ID:
         raise ValueError(f"unknown strategy_id; valid: {', '.join(STRATEGY_BY_ID)}")
+    from app.services.research import load_validations
+
+    validations = await load_validations(ctx.session)
     return {
         "data_class": "verified_app_data",
         "validation_standards": asdict(STANDARDS),
@@ -263,11 +266,11 @@ async def get_strategy_specs(ctx: ToolContext, args: dict[str, Any]) -> dict[str
             {
                 **asdict(s.spec),
                 "eligible_instruments": list(s.spec.eligible_instruments),
-                "validation": asdict(strategy_validation(s.spec.id)),
+                "validation": asdict(strategy_validation(s.spec.id, validations)),
             }
             for s in strategies
         ],
-        "note": "No backtest results exist yet, so historical expectancy, win rate and sample size are unknown.",
+        "note": "Validation comes from the latest backtest on real historical data; simulated data never validates.",
     }
 
 

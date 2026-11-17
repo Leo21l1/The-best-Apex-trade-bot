@@ -53,7 +53,8 @@ async def _clean_state() -> AsyncIterator[None]:
     async with get_engine().begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE copilot_exchanges, economic_events, account_snapshots, rules, alerts, signals, "
+                "TRUNCATE backtest_runs, paper_accounts, journal_trades, copilot_exchanges, economic_events, "
+                "account_snapshots, rules, alerts, signals, "
                 "candles, audit_logs, users "
                 "RESTART IDENTITY CASCADE"
             )

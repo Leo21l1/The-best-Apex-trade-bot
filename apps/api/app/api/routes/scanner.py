@@ -24,6 +24,7 @@ from app.risk.engine import check_trade
 from app.services.account import current_state
 from app.services.alerts import alert_to_wire
 from app.services.calendar import news_exposure
+from app.services.research import load_validations
 from app.strategies.library import STRATEGIES
 
 router = APIRouter(tags=["scanner"])
@@ -93,6 +94,7 @@ async def opportunities(
     rows = (await session.scalars(q.order_by(SignalRow.created_at.desc()).limit(300))).all()
     items = [_signal_out(r) for r in rows]
     rules, state = await current_state(session)
+    validations = await load_validations(session)
     await session.commit()
     s = get_settings()
     now = datetime.now(UTC)
@@ -106,12 +108,32 @@ async def opportunities(
         item["news"] = news_cache[sym]
         item["news_exposure"] = news_cache[sym]["summary"]
         item["risk"] = _risk(rules, state, item)
-        item["rank_blockers"] = [b for b in item["rank_blockers"] if not b.startswith("Risk eligibility")]
-        item["rank_blockers"].append(_risk_blocker(item["risk"]))
         item["risk_eligibility"] = item["risk"]["verdict"]
+        val = strategy_validation(item["strategy_id"], validations)
+        item["validation"] = {
+            "validated": val.validated,
+            "reason": val.reason,
+            "sample_size": val.sample_size,
+            "expectancy_r": val.expectancy_r,
+        }
+        blockers = []
+        if not val.validated:
+            blockers.append(f"Strategy not validated: {val.reason}")
+        if item["quality"] not in ("live", "delayed"):
+            blockers.append(f"Data class is {item['quality'].upper()}; ranking requires live or delayed data.")
+        if not rules.verified:
+            blockers.append("Apex rule profile is unverified.")
+        if item["news"]["status"] == "inside_window":
+            blockers.append("Inside an economic event window.")
+        risk_ok = item["risk"]["verdict"] == "no_violation_found" and (item["risk"]["max_size"] or 0) >= 1
+        if not risk_ok:
+            blockers.append(_risk_blocker(item["risk"]))
+        item["rank_blockers"] = blockers
+        item["rank_eligible"] = not blockers
+    # Rank by validated out-of-sample expectancy (R), then by setup score.
     ranked = sorted(
-        (i for i in items if i.get("rank_eligible") and i["status"] == "active"),
-        key=lambda i: i["score"],
+        (i for i in items if i["rank_eligible"] and i["status"] == "active"),
+        key=lambda i: (i["validation"]["expectancy_r"] or 0.0, i["score"]),
         reverse=True,
     )
     scan = await _latest_scan()
@@ -120,10 +142,11 @@ async def opportunities(
         "provider": None if provider == "none" else provider,
         "quality": (scan or {}).get("quality", "unavailable"),
         "ranked": ranked,
-        "candidates": [i for i in items if not i.get("rank_eligible")],
+        "candidates": [i for i in items if not i["rank_eligible"]],
         "score_note": SCORE_NOTE,
-        "ranking_rule": "Ranked = validated strategy AND live/delayed data AND risk-eligible, "
-        "ordered by setup score. Zero ranked opportunities is a valid result.",
+        "ranking_rule": "Ranked = validated strategy AND live/delayed data AND verified rule profile AND "
+        "risk-eligible AND outside event windows, ordered by validated expectancy then setup score. "
+        "Zero ranked opportunities is a valid result.",
     }
 
 
@@ -178,12 +201,13 @@ def _risk_blocker(risk: dict[str, Any]) -> str:
 
 
 @router.get("/strategies")
-async def strategies(_: CurrentUser) -> dict[str, Any]:
+async def strategies(_: CurrentUser, session: SessionDep) -> dict[str, Any]:
+    validations = await load_validations(session)
     out = []
     for strat in STRATEGIES:
         spec = asdict(strat.spec)
         spec["eligible_instruments"] = list(strat.spec.eligible_instruments)
-        spec["validation"] = asdict(strategy_validation(strat.spec.id))
+        spec["validation"] = asdict(strategy_validation(strat.spec.id, validations))
         out.append(spec)
     return {"strategies": out, "validation_standards": asdict(STANDARDS)}
 

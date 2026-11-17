@@ -17,8 +17,8 @@ $50K EOD Evaluation traded manually on Tradovate.
 | 3 | Instrument specs, strategies A–H, scanner, opportunity scoring, alerts | **Done** ([report](docs/phase-reports/phase-3.md)) |
 | 4 | Apex rule profile with verification workflow, risk engine, account snapshots / CSV import | **Done**; rules still need verifying by you ([report](docs/phase-reports/phase-4.md)) |
 | 5 | Claude copilot, economic calendar, briefings | **Done**; copilot not yet run against the real API ([report](docs/phase-reports/phase-5.md)) |
-| 6 | Backtesting, paper-trading simulator, journal, walk-forward | Next |
-| 7 | Hardening, security review, performance, deployment | Planned |
+| 6 | Backtesting, paper-trading simulator, journal, walk-forward | **Done** ([report](docs/phase-reports/phase-6.md)) |
+| 7 | Hardening, security review, performance, deployment | Next |
 
 The Apex rule values in this repo are **provisional and unverified** until Phase 4 checks each one
 against official Apex documentation. No price is shown unless a market-data provider is configured

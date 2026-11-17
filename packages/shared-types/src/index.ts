@@ -554,3 +554,182 @@ export interface BriefingResponse {
   ranked_opportunities: number;
   note: string;
 }
+
+// ---- Phase 6: backtesting, paper trading, journal, analytics ------------------------------
+
+export interface BacktestMetrics {
+  trades: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  expectancy: number | null;
+  expectancy_r: number | null;
+  t_stat_r: number | null;
+  net_profit: number;
+  total_commission: number;
+  max_drawdown: number;
+  max_drawdown_r: number;
+  trades_per_day: number | null;
+  exposure: number | null;
+  daily_sharpe_annualized: number | null;
+  exit_reasons: Record<string, number>;
+}
+
+export interface BacktestTrade {
+  direction: "long" | "short";
+  signal_ts: string;
+  entry_ts: string;
+  exit_ts: string;
+  entry: number;
+  stop: number;
+  target: number;
+  exit: number;
+  exit_reason: string;
+  quantity: number;
+  pnl: number;
+  commission: number;
+  r: number;
+  trading_day: string;
+}
+
+export interface BacktestResult {
+  engine_version: string;
+  params: Record<string, unknown>;
+  dataset: { bars: number; first: string | null; last: string | null; sha256: string; quality: DataQuality; trading_days: number };
+  metrics: BacktestMetrics;
+  in_sample: BacktestMetrics;
+  out_of_sample: BacktestMetrics;
+  split: { in_sample_days: number; out_of_sample_days: number; first_oos_day: string | null };
+  walk_forward: { fold: number; first_day: string; last_day: string; metrics: BacktestMetrics }[];
+  monte_carlo: null | {
+    runs: number;
+    seed: number;
+    net_profit: { p5: number; p50: number; p95: number };
+    max_drawdown: { p50: number; p95: number; p99: number };
+    probability_of_loss: number;
+  };
+  sensitivity: { variant: string; trades: number; win_rate: number | null; profit_factor: number | null; expectancy_r: number | null; net_profit: number; max_drawdown: number }[];
+  multiple_testing: { configurations_tested: number; t_stat_r: number | null; z_required_bonferroni: number; significant_after_adjustment: boolean; note: string };
+  validation: { passed: boolean; checks: { name: string; passed: boolean; detail: string }[] };
+  assumptions: string[];
+  trades: BacktestTrade[];
+  result_sha256: string;
+}
+
+export interface BacktestRun {
+  id: number;
+  created_at: string;
+  status: "queued" | "running" | "done" | "failed";
+  strategy_id: string;
+  symbol: string;
+  provider: string;
+  start: string;
+  end: string;
+  params: Record<string, unknown>;
+  validated: boolean | null;
+  error: string | null;
+  finished_at: string | null;
+  summary?: Pick<BacktestMetrics, "trades" | "win_rate" | "profit_factor" | "expectancy_r" | "net_profit" | "max_drawdown">;
+  dataset_quality?: DataQuality;
+  result?: BacktestResult;
+}
+
+export interface PaperOrder {
+  id: number;
+  symbol: string;
+  side: "buy" | "sell";
+  type: "market" | "limit" | "stop";
+  qty: number;
+  filled_qty: number;
+  price: number | null;
+  status: "working" | "pending" | "partially_filled" | "filled" | "cancelled" | "rejected";
+  reason: string | null;
+  created_at: string;
+  parent_id: number | null;
+  role: "entry" | "stop_loss" | "take_profit";
+  avg_fill_price: number | null;
+}
+
+export interface PaperState {
+  id: number;
+  provider: string;
+  isolated: true;
+  notice: string;
+  summary: {
+    status: "active" | "halted_daily_loss" | "breached";
+    balance: number;
+    unrealized: number;
+    equity: number;
+    drawdown_threshold: number;
+    drawdown_room: number;
+    day_pnl: number;
+    daily_loss_remaining: number;
+    contracts_in_use: number;
+    max_contracts: number;
+  };
+  positions: { symbol: string; qty: number; avg_price: number; opened_at: string | null; last: number | null }[];
+  orders: PaperOrder[];
+  fills: { order_id: number | null; ts: string; symbol: string; side: string; qty: number; price: number; commission: number }[];
+  closed: { id: number; symbol: string; direction: string; qty: number; entry_time: string; exit_time: string; entry_price: number; exit_price: number; gross_pnl: number; fees: number }[];
+  events: { ts: string; text: string }[];
+  config: Record<string, number>;
+}
+
+export interface JournalTrade {
+  id: number;
+  source: "csv" | "manual" | "paper";
+  trading_date: string;
+  symbol: string;
+  contract: string | null;
+  direction: "long" | "short";
+  quantity: number;
+  entry_time: string;
+  exit_time: string;
+  entry_price: number;
+  exit_price: number;
+  gross_pnl: number;
+  fees: number;
+  net_pnl: number;
+  strategy_id: string | null;
+  planned_stop: number | null;
+  planned_target: number | null;
+  followed_plan: boolean | null;
+  mistakes: string[];
+  notes: string | null;
+}
+
+export interface TradeStats {
+  trades: number;
+  net_pnl: number;
+  fees: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  expectancy: number | null;
+  max_drawdown: number;
+  contracts: number;
+}
+
+export interface JournalResponse {
+  trades: JournalTrade[];
+  stats: TradeStats;
+  mistake_tags: string[];
+}
+
+export interface AnalyticsResponse {
+  window_days: number;
+  period: "day" | "week" | "month";
+  overall: TradeStats;
+  by_period: (TradeStats & { key: string })[];
+  by_strategy: (TradeStats & { key: string })[];
+  by_symbol: (TradeStats & { key: string })[];
+  by_hour_et: (TradeStats & { key: string })[];
+  by_direction: (TradeStats & { key: string })[];
+  mistakes: { tag: string; count: number; share: number; total_pnl: number; avg_pnl_with: number | null; avg_pnl_without: number | null; welch: { t: number | null; p: number | null; note: string | null }; evidence: string }[];
+  planned_vs_actual: { trades_with_plan: number; trades_without_plan: number; avg_r: number | null; exits_beyond_stop: number; reached_target: number; followed_plan_rate: number | null };
+  rule_violations: { trade_id: number; date: string; rule: string; detail: string }[];
+  rules_verified: boolean;
+  notes: string[];
+}

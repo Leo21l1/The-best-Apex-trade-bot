@@ -1,8 +1,7 @@
 """Research validation standards.
 
-A strategy may produce RANKED opportunities only after its backtest evidence meets these
-thresholds. Until the backtesting laboratory (Phase 6) records results, every strategy is
-unvalidated and the ranked leaderboard is empty by design.
+A strategy may produce RANKED opportunities only after its latest backtest on real historical data
+(never simulated data) meets these thresholds, including out-of-sample and walk-forward checks.
 """
 
 from __future__ import annotations
@@ -32,6 +31,9 @@ class ValidationStatus:
     profit_factor: float | None = None
 
 
-def strategy_validation(strategy_id: str) -> ValidationStatus:
-    """Validation status for a strategy. No backtest evidence exists yet."""
-    return ValidationStatus(False, "No backtest evidence recorded (backtesting arrives in Phase 6).")
+NO_EVIDENCE = ValidationStatus(False, "No completed backtest on real historical data yet.")
+
+
+def strategy_validation(strategy_id: str, known: dict[str, ValidationStatus] | None = None) -> ValidationStatus:
+    """Validation status from the latest qualifying experiment (see ``services.research.load_validations``)."""
+    return (known or {}).get(strategy_id, NO_EVIDENCE)

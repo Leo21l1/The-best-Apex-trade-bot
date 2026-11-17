@@ -72,7 +72,7 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page).toHaveURL(/\/login$/);
   });
 
-  test("all 14 dashboard pages render", async ({ page }) => {
+  test("all dashboard pages render", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel("Email").fill(EMAIL);
     await page.getByLabel("Password").fill(PASSWORD);
@@ -85,7 +85,7 @@ test.describe.serial("dashboard workflows", () => {
       ["/account", "Apex Account Health"], ["/risk", "Risk Guardian"],
       ["/strategies", "Strategy Laboratory"], ["/backtesting", "Backtesting"],
       ["/journal", "Trading Journal"], ["/performance", "Performance Analytics"],
-      ["/calendar", "Economic Calendar"], ["/settings", "Settings & Integrations"],
+      ["/calendar", "Economic Calendar"], ["/settings", "Settings & Integrations"], ["/paper", "Paper Trading"],
       ["/system", "System Health"],
     ];
     for (const [path, heading] of pages) {

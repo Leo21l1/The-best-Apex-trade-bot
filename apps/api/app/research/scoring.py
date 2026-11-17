@@ -70,14 +70,19 @@ def score_signal(ctx: MarketContext, sig: Signal, cost: float) -> tuple[float, l
 
 
 def build_opportunity(
-    ctx: MarketContext, ev: Evaluation, settings: Settings, provider: str, quality: str
+    ctx: MarketContext,
+    ev: Evaluation,
+    settings: Settings,
+    provider: str,
+    quality: str,
+    validations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Explainable opportunity record for a triggered signal."""
     sig = ev.signal
     assert sig is not None
     cost = round_trip_cost(ctx, settings)
     score, breakdown = score_signal(ctx, sig, cost)
-    val = strategy_validation(sig.strategy_id)
+    val = strategy_validation(sig.strategy_id, validations)
     tick_value = float(ctx.instrument.tick_value)
     risk_dollars = round(sig.risk / ctx.tick * tick_value, 2)
 

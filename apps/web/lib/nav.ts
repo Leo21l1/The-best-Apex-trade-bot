@@ -32,6 +32,8 @@ export const NAV: NavItem[] = [
     summary: "Strategy specifications, validation status and eligibility." },
   { href: "/backtesting", label: "Backtesting", key: "b", group: "Research", phase: 6,
     summary: "Event-driven backtests, walk-forward and Monte Carlo analysis." },
+  { href: "/paper", label: "Paper Trading", key: "m", group: "Research", phase: 6,
+    summary: "Isolated order simulator for practising and checking strategy behaviour." },
   { href: "/calendar", label: "Economic Calendar", key: "e", group: "Research", phase: 5,
     summary: "CPI, FOMC, NFP and other events with configurable alert windows." },
   { href: "/settings", label: "Settings & Integrations", key: ",", group: "System", phase: 1,
@@ -41,7 +43,7 @@ export const NAV: NavItem[] = [
 ];
 
 /** Pages whose phase is at or below this are implemented. */
-export const COMPLETED_PHASE = 5;
+export const COMPLETED_PHASE = 6;
 
 export const NAV_GROUPS = ["Markets", "Account", "Research", "System"] as const;
 

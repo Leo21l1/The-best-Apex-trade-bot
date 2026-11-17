@@ -87,10 +87,55 @@ async def calendar_sync(stop: asyncio.Event, interval_s: float = 6 * 3600) -> No
                 pass
 
 
+async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
+    """Run queued backtests and advance paper accounts from newly stored bars."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.marketdata.status import current_quality
+    from app.models.research import PaperAccount
+    from app.services.paper import process
+    from app.services.research import claim_next, execute_run, recover_stuck
+
+    sm = get_sessionmaker()
+    try:
+        async with sm() as session:
+            await recover_stuck(session)
+    except SQLAlchemyError:
+        log.exception("could not recover stuck backtests")
+    while not stop.is_set():
+        try:
+            async with sm() as session:
+                run = await claim_next(session)
+            if run is not None:
+                quality, _ = await current_quality()
+                # Stored bars keep their class: simulated stays simulated even when the feed is down.
+                if get_settings().market_data_provider == "simulated":
+                    quality = "simulated"
+                elif quality in ("unavailable", "live", "delayed"):
+                    quality = "historical"
+                await execute_run(sm, run.id, quality)
+                continue
+            async with sm() as session:
+                from sqlalchemy import select
+
+                for acct in (await session.scalars(select(PaperAccount))).all():
+                    await process(session, acct, datetime.now(UTC))
+                await session.commit()
+        except (SQLAlchemyError, OSError):
+            log.exception("lab job failed")
+        try:
+            await asyncio.wait_for(stop.wait(), interval_s)
+        except TimeoutError:
+            pass
+
+
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
     calendar = asyncio.create_task(calendar_sync(stop))
+    lab = asyncio.create_task(lab_jobs(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
     while not stop.is_set():
         try:
@@ -101,7 +146,7 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    tasks = {t for t in (ingestion, scanner, calendar) if t is not None}
+    tasks = {t for t in (ingestion, scanner, calendar, lab) if t is not None}
     await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if not t.done():

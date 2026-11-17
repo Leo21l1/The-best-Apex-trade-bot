@@ -55,7 +55,13 @@ async def load_bars(session: AsyncSession, provider: str, symbol: str, since: da
 
 
 def scan_symbol(
-    symbol: str, bars: list[Bar], now: datetime, settings: Settings, provider: str, quality: str
+    symbol: str,
+    bars: list[Bar],
+    now: datetime,
+    settings: Settings,
+    provider: str,
+    quality: str,
+    validations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure scan of one symbol: radar, every strategy evaluation, and triggered opportunities."""
     ctx = MarketContext(symbol, now, bars)
@@ -74,7 +80,7 @@ def scan_symbol(
             }
         )
         if ev.signal is not None:
-            opportunities.append(build_opportunity(ctx, ev, settings, provider, quality))
+            opportunities.append(build_opportunity(ctx, ev, settings, provider, quality, validations))
     return {"radar": symbol_radar(ctx), "evaluations": evaluations, "opportunities": opportunities}
 
 
@@ -143,9 +149,12 @@ class ScannerService:
             until = floor_minute(now)
             since = until - timedelta(hours=s.scanner_lookback_hours)
             async with self._sessionmaker() as session:
+                from app.services.research import load_validations
+
+                validations = await load_validations(session)
                 for symbol in s.market_data_symbols:
                     bars = await load_bars(session, provider, symbol, since, until)
-                    result = scan_symbol(symbol, bars, now, s, provider, quality)
+                    result = scan_symbol(symbol, bars, now, s, provider, quality, validations)
                     doc["symbols"].append({**result["radar"], "evaluations": result["evaluations"]})
                     await self._lifecycle(session, provider, symbol, bars, now, quality)
                     for opp in result["opportunities"]:
