@@ -854,7 +854,7 @@ export interface Scenario {
 export interface TradeReview {
   version: string;
   generated_at: string;
-  journal: Record<"trade_summary" | "entry_analysis" | "market_conditions" | "news_context" | "risk_analysis" | "execution_review" | "outcome" | "improvement_opportunities" | "lesson", string>;
+  journal: Record<"trade_summary" | "entry_analysis" | "market_conditions" | "news_context" | "risk_analysis" | "execution_review" | "outcome" | "improvement_opportunities" | "lesson", string> & Partial<Record<"price_action_at_entry" | "price_action_after", string>>;
   coaching: {
     did_well: string[];
     could_improve: string[];

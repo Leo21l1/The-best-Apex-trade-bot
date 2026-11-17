@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChartEvent, Instrument, SmcPattern, Timeframe } from "@apex/shared-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, Panel, QualityBadge } from "@/components/ui/primitives";
 import { usePolling } from "@/hooks/usePolling";
@@ -19,6 +19,11 @@ export function SmcPage() {
   const [symbol, setSymbol] = useState("ES");
   const [tf, setTf] = useState<Timeframe>("5m");
   const [settings, setSettings] = useSmcSettings();
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("symbol");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of the URL after mount
+    if (q) setSymbol(q.toUpperCase());
+  }, []);
   const [selected, setSelected] = useState<SmcPattern | null>(null);
   const [level, setLevel] = useState<number | null>(null);
   const [event, setEvent] = useState<ChartEvent | null>(null);

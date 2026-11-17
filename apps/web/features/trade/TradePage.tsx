@@ -111,8 +111,8 @@ function Review({ trade, onChange }: { trade: TradeDetail; onChange: (t: TradeDe
   if (!r) return <p className="text-sm text-faint">Generating review…</p>;
   const J: [keyof typeof r.journal, string][] = [
     ["trade_summary", "Trade summary"], ["entry_analysis", "Entry analysis"], ["market_conditions", "Market conditions"],
-    ["news_context", "News context"], ["risk_analysis", "Risk analysis"], ["execution_review", "Execution review"],
-    ["outcome", "Outcome"], ["improvement_opportunities", "Improvement opportunities"], ["lesson", "Lesson"],
+    ["price_action_at_entry", "Price action at entry (5m)"], ["news_context", "News context"], ["risk_analysis", "Risk analysis"], ["execution_review", "Execution review"],
+    ["outcome", "Outcome"], ["price_action_after", "Price action after entry (hindsight)"], ["improvement_opportunities", "Improvement opportunities"], ["lesson", "Lesson"],
   ];
   return (
     <div className="space-y-4" data-testid="trade-review">
@@ -131,7 +131,7 @@ function Review({ trade, onChange }: { trade: TradeDetail; onChange: (t: TradeDe
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Automatic journal">
           <dl className="space-y-2 text-sm" data-testid="journal-sections">
-            {J.map(([k, label]) => (
+            {J.filter(([k]) => r.journal[k]).map(([k, label]) => (
               <div key={k}><dt className="text-[11px] font-medium tracking-wide text-muted uppercase">{label}</dt><dd className="text-text/90">{r.journal[k]}</dd></div>
             ))}
           </dl>

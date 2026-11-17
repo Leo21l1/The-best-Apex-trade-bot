@@ -171,6 +171,13 @@ async def test_excursions_context_journal_and_scenarios() -> None:
     assert any("A stop was defined" in x for x in coach["did_well"])
     tl = [x["kind"] for x in t.review["timeline"]]
     assert tl.index("entry") < tl.index("exit")
+    # Price-action state at entry (closed bars only) and hindsight kept separately.
+    smc = ctx["smc"]
+    assert smc["available"] and smc["timeframe"] == "5m"
+    assert {"structure_trend", "zones_near_entry", "confirmation_present", "recent_sweeps"} <= set(smc["at_entry"])
+    assert "Hindsight" in smc["by_exit"]["note"]
+    assert "5m structure" in j["price_action_at_entry"] and j["price_action_after"].startswith("Hindsight")
+    assert coach["information_at_entry"]["price_action"] == smc["at_entry"]
 
 
 async def test_news_attribution_uses_careful_language_and_measures_reaction() -> None:

@@ -492,6 +492,86 @@ def coach(
     return {"findings": findings, "did_well": good}
 
 
+def smc_review(d: TradeData) -> dict[str, Any]:
+    """Price-action state on closed 5-minute bars at entry, and what changed by the exit.
+
+    ``at_entry`` uses only bars that closed before the entry; ``by_exit`` is hindsight and is kept
+    separate so the coach never judges the entry with information that did not exist yet.
+    """
+    from app.marketdata.types import Timeframe
+    from app.research.bars import aggregate, closed_only
+    from app.research.smc import analyze
+
+    t = d.trade
+    s = 1 if t.direction == "long" else -1
+    want = "bullish" if s == 1 else "bearish"
+    tick = float(INSTRUMENTS[t.symbol].tick_size)
+    pre = closed_only(aggregate([b for b in d.bars if b.ts < t.entry_time], Timeframe.M5), Timeframe.M5, t.entry_time)
+    if len(pre) < 30:
+        return {"available": False, "reason": "Not enough stored 5-minute bars before entry for price-action analysis."}
+    a = analyze(t.symbol, "5m", pre[-400:], tick)
+    atr_ = a.atr or 0.0
+    recent_cut = pre[-min(6, len(pre))].ts
+    near = [
+        p
+        for p in a.patterns
+        if p.type.endswith(("order_block", "fvg", "_zone"))
+        and p.status not in ("invalidated", "filled")
+        and p.bottom - atr_ <= t.entry_price <= p.top + atr_
+    ]
+    sweeps = [p for p in a.patterns if p.type.endswith("_sweep") and p.confirmed_at and p.confirmed_at >= recent_cut]
+    shifts = [
+        p for p in a.patterns if p.type in ("CHoCH", "MSS", "BOS") and p.confirmed_at and p.confirmed_at >= recent_cut
+    ]
+    confirmation = [
+        p
+        for p in sweeps + shifts
+        if p.direction == want and (p.type in ("CHoCH", "MSS", "BOS") or p.status == "confirmed_rejection")
+    ]
+    above = [x for x in a.liquidity if x["side"] == "above"]
+    below = [x for x in a.liquidity if x["side"] == "below"]
+
+    def brief(p) -> dict[str, Any]:
+        return {
+            "id": p.id,
+            "type": p.type,
+            "direction": p.direction,
+            "status": p.status,
+            "top": p.top,
+            "bottom": p.bottom,
+        }
+
+    at_entry = {
+        "structure_trend": a.trend,
+        "with_structure": a.trend == want,
+        "zones_near_entry": [brief(p) for p in near[:6]],
+        "recent_sweeps": [brief(p) for p in sweeps[:4]],
+        "recent_structure": [brief(p) for p in shifts[:4]],
+        "confirmation_present": bool(confirmation),
+        "confirmation": [brief(p) for p in confirmation[:3]],
+        "premium_discount": a.premium_discount,
+        "nearest_liquidity_above": min(above, key=lambda x: x["price"])["price"] if above else None,
+        "nearest_liquidity_below": max(below, key=lambda x: x["price"])["price"] if below else None,
+    }
+    # Hindsight: re-run on bars through the exit and see what happened to the entry-time zones.
+    post = closed_only(aggregate([b for b in d.bars if b.ts < t.exit_time], Timeframe.M5), Timeframe.M5, t.exit_time)
+    b = analyze(t.symbol, "5m", post[-400:], tick)
+    by_id = {p.id: p for p in b.patterns}
+    supporting = [p for p in near if p.direction == want]
+    invalidated = [brief(p) for p in supporting if by_id.get(p.id) and by_id[p.id].status == "invalidated"]
+    return {
+        "available": True,
+        "timeframe": "5m",
+        "at_entry": at_entry,
+        "by_exit": {
+            "supporting_zones_invalidated": invalidated,
+            "structure_trend": b.trend,
+            "note": "Hindsight: computed with bars that closed after the entry.",
+        },
+        "disclaimer": "Rule-based candle geometry; it does not observe orders or institutions.",
+    }
+
+
 def build_review(
     d: TradeData, settings: Settings, daily_loss_limit: float, max_contracts: float
 ) -> tuple[dict[str, Any], dict[str, Any], float | None, float | None]:
@@ -509,6 +589,7 @@ def build_review(
     )
     alts = scenarios(d, commission)
     c = coach(d, ctx, news, mfe, mae, daily_loss_limit, max_contracts)
+    smc = smc_review(d)
     duration = (t.exit_time - t.entry_time).total_seconds()
     r_mult = (
         ((t.exit_price - t.entry_price) * s / abs(t.entry_price - stop)) if stop not in (None, t.entry_price) else None
@@ -534,6 +615,7 @@ def build_review(
         "market": ctx,
         "news": news,
         "signal_at_entry": signal,
+        "smc": smc,
         "plan": None
         if d.plan is None
         else {
@@ -602,6 +684,24 @@ def build_review(
         else "No rule-based issues were found in the recorded data.",
         "lesson": _lesson(c["findings"], t.net_pnl),
     }
+    if smc.get("available"):
+        ae = smc["at_entry"]
+        journal["price_action_at_entry"] = (
+            f"5m structure {ae['structure_trend']} ({'with' if ae['with_structure'] else 'against'} the trade); "
+            f"{len(ae['zones_near_entry'])} valid zone(s) within 1 ATR of entry; "
+            + (
+                "confirmation present (" + ", ".join(p["type"] for p in ae["confirmation"]) + ")"
+                if ae["confirmation_present"]
+                else "no confirming sweep rejection or structure break in the prior 6 bars"
+            )
+            + "."
+        )
+        inv = smc["by_exit"]["supporting_zones_invalidated"]
+        journal["price_action_after"] = (
+            f"Hindsight: {len(inv)} supporting zone(s) were invalidated by the exit."
+            if inv
+            else "Hindsight: no supporting zone near entry was invalidated by the exit."
+        )
     coaching = {
         "did_well": c["did_well"] or ["No specific strengths could be identified from the recorded data."],
         "could_improve": [f["title"] for f in c["findings"]],
@@ -611,7 +711,9 @@ def build_review(
             "scheduled_events_known": [e["title"] for e in news["events"] if e["known_before_entry"]],
             "signal": signal,
             "plan_thesis": d.plan.thesis if d.plan else None,
+            "price_action": smc.get("at_entry"),
         },
+        "hindsight": smc.get("by_exit"),
         "after_entry": (
             f"Best open profit ${mfe:,.2f}, worst open loss ${mae:,.2f} over {len(held)} one-minute bars."
             if mfe is not None

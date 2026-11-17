@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, EmptyState, Panel, QualityBadge } from "@/components/ui/primitives";
 import { usePolling } from "@/hooks/usePolling";
 import { formatEt, formatUsd } from "@/lib/format";
+import { SmcScanPanel } from "../smc/ScanPanel";
 
 const STATUS_CLS: Record<Opportunity["status"], string> = {
   active: "text-accent border-accent/30",
@@ -122,6 +123,7 @@ export function Opportunities() {
           )}
         </Panel>
       </div>
+      <div className="mt-4"><SmcScanPanel /></div>
     </>
   );
 }
