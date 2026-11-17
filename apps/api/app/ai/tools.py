@@ -430,6 +430,30 @@ async def get_session_activity(ctx: ToolContext, args: dict[str, Any]) -> dict[s
     }
 
 
+async def get_trading_readiness(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """Session intelligence + data freshness + news + account risk + the eight checklist conditions."""
+    from app.services.readiness import readiness
+
+    style = str(args.get("style") or "intraday")
+    r = await readiness(ctx.session, _symbol(args.get("symbol")), style, now=ctx.now)
+    inst = INSTRUMENTS[r["checklist"]["symbol"]]
+    return {
+        "data_class": "verified_app_data",
+        "instrument": {
+            "symbol": inst.symbol,
+            "name": inst.name,
+            "tick_size": float(inst.tick_size),
+            "point_value": float(inst.point_value),
+        },
+        **r,
+        "notes": [
+            "Checklist statuses and readiness come from deterministic rules; quote them, do not upgrade them.",
+            "Relative volume and volatility compare the same New York clock window on prior sessions.",
+            "Liquidity is not observable: only volume/range proxies exist (no depth-of-market feed).",
+        ],
+    }
+
+
 # --- registry -------------------------------------------------------------------------------
 
 _SYMBOL = {"type": "string", "description": "Futures symbol, e.g. ES, MNQ, CL"}
@@ -549,6 +573,24 @@ TOOLS: dict[str, tuple[Any, dict[str, Any]]] = {
             "description": "Signal counts by strategy and outcome and alert counts over recent hours. Executed trades "
             "are not available yet.",
             "input_schema": _schema({"hours": {"type": "integer"}}),
+        },
+    ),
+    "get_trading_readiness": (
+        get_trading_readiness,
+        {
+            "description": "For one instrument: current New York time and session window, market open/closed from "
+            "the CME calendar (holidays, early closes, maintenance), data status (LIVE/HISTORICAL/STALE/"
+            "UNAVAILABLE), relative volume and volatility vs the same clock window on prior sessions, regime "
+            "and VWAP crosses, active strategy setup (entry, stop, targets), news window, account risk budget, "
+            "and the eight readiness checklist conditions with PASS/FAIL/WAIT/UNKNOWN, evidence and overall "
+            "status (WAIT / REVIEW SETUP / NO TRADE). Call this before discussing any potential trade.",
+            "input_schema": _schema(
+                {
+                    "symbol": _SYMBOL,
+                    "style": {"type": "string", "enum": ["intraday", "scalping", "momentum", "orb", "afternoon"]},
+                },
+                ["symbol"],
+            ),
         },
     ),
 }

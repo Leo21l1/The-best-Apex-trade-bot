@@ -231,3 +231,76 @@ async def test_readiness_api(admin_client: httpx.AsyncClient) -> None:
     assert (await admin_client.get("/api/session/readiness", params={"style": "yolo"})).status_code == 422
     ctx = (await admin_client.get("/api/session/context", params={"symbol": "ES"})).json()
     assert ctx["window"]["key"] and ctx["market"]["calendar"] == "CME_Equity"
+
+
+async def test_copilot_readiness_tool_payload(admin_client: httpx.AsyncClient) -> None:
+    from decimal import Decimal
+
+    from app.ai.copilot import SYSTEM_PROMPT
+    from app.ai.tools import TOOLS, ToolContext, run_tool
+    from app.core.config import get_settings
+    from app.core.db import get_sessionmaker
+    from app.marketdata.store import upsert_candles
+    from app.marketdata.types import Candle, DataQuality, Timeframe
+    from app.models.signal import SignalRow
+
+    get_settings().market_data_provider = "simulated"
+    now = et(2026, 11, 17, 10, 0)
+    rows = []
+    for d in [*PRIOR, date(2026, 11, 17)]:
+        t0 = datetime.combine(d, time(9, 30), ET).astimezone(UTC)
+        for i in range(30):
+            px = Decimal("5000") + Decimal(i) / 4
+            rows.append(
+                Candle(
+                    "ES",
+                    Timeframe.M1,
+                    t0 + timedelta(minutes=i),
+                    px,
+                    px + 1,
+                    px - 1,
+                    px + Decimal("0.25"),
+                    200 if d == date(2026, 11, 17) else 100,
+                    "simulated",
+                    DataQuality.SIMULATED,
+                )
+            )
+    async with get_sessionmaker()() as s:
+        await upsert_candles(s, rows)
+        s.add(
+            SignalRow(
+                created_at=now - timedelta(minutes=5),
+                provider="simulated",
+                quality="simulated",
+                strategy_id="orb",
+                symbol="ES",
+                direction="long",
+                bar_ts=now - timedelta(minutes=10),
+                entry=5007.0,
+                entry_low=5007.0,
+                entry_high=5007.5,
+                stop=5004.0,
+                targets=[5013.0, 5016.0],
+                score=40,
+                detail={"conditions": [{"name": "range break", "passed": True}]},
+            )
+        )
+        await s.commit()
+        out, err = await run_tool(
+            ToolContext(s, get_settings(), now), "get_trading_readiness", {"symbol": "ES", "style": "orb"}
+        )
+    assert not err, out
+    assert out["data_class"] == "verified_app_data" and out["instrument"]["point_value"] == 50.0
+    ck = out["checklist"]
+    assert ck["ny_time"].startswith("2026-11-17 10:00") and ck["style"] == "orb" and len(ck["items"]) == 8
+    by = {i["key"]: i for i in ck["items"]}
+    assert by["setup"]["status"] == "PASS" and by["setup"]["evidence"]["stop"] == 5004.0
+    assert by["volume"]["status"] == "PASS" and by["volume"]["evidence"]["ratio"] == 2.0
+    assert by["reward_risk"]["evidence"]["ratio"] == round((300 - 30) / (150 + 30), 2)
+    assert ck["status"] in ("WAIT", "REVIEW SETUP", "NO TRADE")
+    assert out["session"]["window"]["key"] == "cash_open" and out["data"]["status"] in ("SIMULATED", "STALE")
+    assert (
+        "get_trading_readiness" in TOOLS
+        and "never less" in SYSTEM_PROMPT
+        and "WAIT, REVIEW SETUP or NO TRADE" in SYSTEM_PROMPT
+    )

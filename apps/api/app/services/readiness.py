@@ -97,7 +97,12 @@ async def readiness(
         else []
     )
     feed = await read_feed_status() or {}
-    quality = feed.get("quality") if provider != "none" else "unavailable"
+    # Without a worker heartbeat, classify stored bars by provider; their age then decides STALE.
+    quality = (
+        (feed.get("quality") or ("simulated" if provider == "simulated" else "historical"))
+        if provider != "none"
+        else "unavailable"
+    )
     market = market_status(symbol, now)
     data = data_status(quality, bars[-1].ts if bars else None, now, market["open"])
     data.update(provider=provider, last_bar=bars[-1].ts.isoformat() if bars else None)
