@@ -5,7 +5,15 @@ from app.models.audit import AuditLog
 from app.models.calendar import EconomicEvent, NewsItem
 from app.models.candle import CandleRow
 from app.models.copilot import CopilotExchange
-from app.models.research import BacktestRun, JournalTrade, PaperAccount, TradePlan
+from app.models.research import (
+    BacktestRun,
+    JournalAttachment,
+    JournalEdit,
+    JournalNote,
+    JournalTrade,
+    PaperAccount,
+    TradePlan,
+)
 from app.models.signal import AlertRow, SignalRow
 from app.models.user import Role, User
 
@@ -17,6 +25,9 @@ __all__ = [
     "CandleRow",
     "CopilotExchange",
     "EconomicEvent",
+    "JournalAttachment",
+    "JournalEdit",
+    "JournalNote",
     "JournalTrade",
     "NewsItem",
     "PaperAccount",

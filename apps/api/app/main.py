@@ -19,6 +19,7 @@ from app.api.routes import (
     copilot,
     health,
     integrations,
+    journal,
     lab,
     market,
     news,
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router, prefix="/api")
     app.include_router(copilot.router, prefix="/api")
     app.include_router(terminal.router, prefix="/api")  # before lab: /journal/trades/{id} detail routes
+    app.include_router(journal.router, prefix="/api")
     app.include_router(lab.router, prefix="/api")
     app.include_router(smc.router, prefix="/api")
     app.include_router(news.router, prefix="/api")

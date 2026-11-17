@@ -697,7 +697,25 @@ export interface JournalTrade {
   followed_plan: boolean | null;
   mistakes: string[];
   notes: string | null;
+  setup?: string | null;
+  thesis?: string | null;
+  psychology?: string | null;
+  emotion_tags?: string[];
+  lessons?: string | null;
+  tags?: string[];
+  chart_links?: string[];
+  /** Execution fields changed by hand (the original record is kept in ``original``). */
+  corrected_fields?: string[];
+  corrections?: Record<string, { value: unknown; at: string; by: string | null; provenance: string; derived: boolean }>;
+  original?: Record<string, unknown> | null;
+  corrected_at?: string | null;
+  record_provenance?: string;
 }
+
+export interface JournalNote { id: number; trade_id: number; body: string; created_at: string; updated_at: string | null }
+export interface JournalAttachment { id: number; trade_id: number; filename: string; content_type: string; size: number; caption: string | null; created_at: string; url: string }
+export interface JournalHistoryItem { id: number; at: string; user: string | null; action: string; field: string | null; old: unknown; new: unknown }
+export interface DeletedTrade { edit_id: number; trade_id: number; deleted_at: string; by: string | null; symbol: string; direction: string; net_pnl: number; exit_time: string; attachments_lost: number }
 
 export interface TradeStats {
   trades: number;

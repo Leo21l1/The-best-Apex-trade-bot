@@ -7,6 +7,7 @@ import { Callout, cx, EmptyState, Panel, Stat } from "@/components/ui/primitives
 import { CollapsiblePanel, PnlCalendar } from "@/components/ui/viz";
 import { api, ApiError } from "@/lib/api";
 import { BrokerImport } from "./BrokerImport";
+import { DeletedTrades, TradeEditor } from "./TradeEditor";
 import { formatEt } from "@/lib/format";
 import { money } from "@/lib/money";
 
@@ -31,6 +32,8 @@ export function Journal() {
   const [source, setSource] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const [month, setMonth] = useState("");
+  const [editing, setEditing] = useState<JournalTrade | null>(null);
+  const [deletedKey, setDeletedKey] = useState(0);
   const load = useCallback(async () => {
     setData(await api<JournalResponse>(`/api/journal/trades${source ? `?source=${source}` : ""}`).catch(() => null));
   }, [source]);
@@ -76,7 +79,7 @@ export function Journal() {
                   <thead><tr className="text-left text-faint">{["Exit (ET)", "Symbol", "Side", "Qty", "Entry", "Exit", "Net", "Strategy", "Plan", "Mistakes", "Src", ""].map((h) => <th key={h} className="px-2 py-1.5 font-medium first:pl-4">{h}</th>)}</tr></thead>
                   <tbody>
                     {data.trades.map((t) => (
-                      <TradeRow key={t.id} t={t} tags={data.mistake_tags} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onSaved={load} />
+                      <TradeRow key={t.id} t={t} tags={data.mistake_tags} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onSaved={load} onEdit={() => setEditing(t)} />
                     ))}
                   </tbody>
                 </table>
@@ -86,14 +89,16 @@ export function Journal() {
         </div>
         <div className="min-w-0 space-y-4">
           <ImportPanel onDone={load} />
+          <DeletedTrades key={deletedKey} onRestored={load} />
         </div>
         <div className="min-w-0 xl:col-span-2"><BrokerImport onImported={load} /></div>
       </div>
+      {editing && <TradeEditor trade={editing} onClose={() => setEditing(null)} onSaved={() => { void load(); setDeletedKey((k) => k + 1); }} />}
     </>
   );
 }
 
-function TradeRow({ t, tags, open, onToggle, onSaved }: { t: JournalTrade; tags: string[]; open: boolean; onToggle: () => void; onSaved: () => void }) {
+function TradeRow({ t, tags, open, onToggle, onSaved, onEdit }: { t: JournalTrade; tags: string[]; open: boolean; onToggle: () => void; onSaved: () => void; onEdit: () => void }) {
   const [edit, setEdit] = useState({ strategy_id: t.strategy_id ?? "", planned_stop: t.planned_stop?.toString() ?? "", planned_target: t.planned_target?.toString() ?? "", followed_plan: t.followed_plan, mistakes: t.mistakes, notes: t.notes ?? "" });
   const [err, setErr] = useState<string | null>(null);
   const save = async () => {
@@ -122,7 +127,11 @@ function TradeRow({ t, tags, open, onToggle, onSaved }: { t: JournalTrade; tags:
         <td className="px-2 font-sans">{t.followed_plan == null ? "—" : t.followed_plan ? "✓" : "✗"}</td>
         <td className="px-2 font-sans text-warn">{t.mistakes.join(", ")}</td>
         <td className="px-2 font-sans text-faint">{t.source === "paper" ? "paper (sim)" : t.source}</td>
-        <td className="px-2"><a href={`/trade?id=${t.id}`} onClick={(e) => e.stopPropagation()} className="font-sans text-accent hover:underline" data-testid={`review-${t.id}`}>Review</a></td>
+        <td className="px-2 whitespace-nowrap">
+          <a href={`/trade?id=${t.id}`} onClick={(e) => e.stopPropagation()} className="font-sans text-accent hover:underline" data-testid={`review-${t.id}`}>Review</a>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(); }} className="ml-2 font-sans text-accent hover:underline" data-testid={`edit-${t.id}`} aria-label={`Edit trade ${t.id}`}>Edit</button>
+          {(t.corrected_fields?.length ?? 0) > 0 && <span className="ml-1 font-sans text-[10px] text-warn" title={`Manually corrected: ${t.corrected_fields!.join(", ")}`}>✎ corrected</span>}
+        </td>
       </tr>
       {open && (
         <tr className="border-t border-line/60 bg-panel-2/30">

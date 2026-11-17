@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -90,6 +90,21 @@ class JournalTrade(Base):
     #: Generated journal, coaching findings and hypothetical scenarios.
     review: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # --- annotations (trader's own words; never part of the execution record) ---
+    setup: Mapped[str | None] = mapped_column(String(64))
+    thesis: Mapped[str | None] = mapped_column(Text)
+    psychology: Mapped[str | None] = mapped_column(Text)
+    emotion_tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    lessons: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    chart_links: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    # --- provenance of manual corrections ---
+    #: Execution fields exactly as first recorded (import / manual entry / simulator). Written once,
+    #: before the first correction, and never modified afterwards.
+    original: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: Field -> {"value", "at", "by"} for every execution field changed by hand.
+    corrections: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TradePlan(Base):
@@ -114,3 +129,51 @@ class TradePlan(Base):
     #: draft | executed_paper | executed_manual | cancelled
     status: Mapped[str] = mapped_column(String(20), default="draft")
     execution: Mapped[str | None] = mapped_column(String(20))
+
+
+class JournalNote(Base):
+    """A personal note attached to a journal trade (add / edit / delete)."""
+
+    __tablename__ = "journal_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("journal_trades.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    author_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    body: Mapped[str] = mapped_column(Text)
+
+
+class JournalAttachment(Base):
+    """A screenshot attached to a journal trade, stored in PostgreSQL (images only, size-limited)."""
+
+    __tablename__ = "journal_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("journal_trades.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    author_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    filename: Mapped[str] = mapped_column(String(200))
+    content_type: Mapped[str] = mapped_column(String(32))
+    size: Mapped[int] = mapped_column(Integer)
+    caption: Mapped[str | None] = mapped_column(String(500))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class JournalEdit(Base):
+    """Audit trail of journal changes: one row per changed field (or a full snapshot on delete).
+
+    ``trade_id`` is deliberately not a foreign key so the history survives deletion.
+    """
+
+    __tablename__ = "journal_edits"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    trade_id: Mapped[int] = mapped_column(Integer, index=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    user_email: Mapped[str | None] = mapped_column(String(320))
+    action: Mapped[str] = mapped_column(String(24))  # edit | correct | note_* | attachment_* | delete | restore
+    field: Mapped[str | None] = mapped_column(String(64))
+    old: Mapped[Any] = mapped_column(JSONB, nullable=True)
+    new: Mapped[Any] = mapped_column(JSONB, nullable=True)

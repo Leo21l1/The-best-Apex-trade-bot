@@ -7,7 +7,7 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 
@@ -245,33 +245,6 @@ class CsvIn(BaseModel):
     dry_run: bool = False
 
 
-class TradeEdit(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    strategy_id: str | None = None
-    planned_stop: float | None = Field(default=None, gt=0)
-    planned_target: float | None = Field(default=None, gt=0)
-    followed_plan: bool | None = None
-    mistakes: list[str] | None = Field(default=None, max_length=10)
-    notes: str | None = Field(default=None, max_length=5000)
-
-    @field_validator("mistakes")
-    @classmethod
-    def _tags(cls, v: list[str] | None) -> list[str] | None:
-        if v is None:
-            return v
-        bad = [m for m in v if m not in MISTAKE_TAGS]
-        if bad:
-            raise ValueError(f"unknown mistake tags: {', '.join(bad)}")
-        return sorted(set(v))
-
-    @field_validator("strategy_id")
-    @classmethod
-    def _strategy(cls, v: str | None) -> str | None:
-        if v not in (None, "", *STRATEGY_BY_ID, "discretionary"):
-            raise ValueError("unknown strategy")
-        return v or None
-
-
 def _trade_out(t: JournalTrade) -> dict[str, Any]:
     return {
         "id": t.id,
@@ -303,6 +276,27 @@ def _trade_out(t: JournalTrade) -> dict[str, Any]:
         "broker_record": t.source == "csv",
         "reviewed": t.review is not None,
         "findings": [f["code"] for f in ((t.review or {}).get("coaching") or {}).get("supported_mistakes", [])],
+        "setup": t.setup,
+        "thesis": t.thesis,
+        "psychology": t.psychology,
+        "emotion_tags": t.emotion_tags or [],
+        "lessons": t.lessons,
+        "tags": t.tags or [],
+        "chart_links": t.chart_links or [],
+        "corrected_fields": sorted((t.corrections or {}).keys()),
+        "corrections": t.corrections or {},
+        "original": t.original,
+        "corrected_at": t.corrected_at.isoformat() if t.corrected_at else None,
+        "record_provenance": (
+            (
+                "broker record (imported)"
+                if t.source == "csv"
+                else "simulator record"
+                if t.source == "paper"
+                else "manual entry"
+            )
+            + (" with manual corrections" if t.corrections else "")
+        ),
     }
 
 
@@ -390,35 +384,6 @@ async def journal_trades(
         q = q.where(JournalTrade.source == source)
     rows = (await session.scalars(q.order_by(JournalTrade.exit_time.desc()).limit(limit))).all()
     return {"trades": [_trade_out(t) for t in rows], "stats": stats(rows), "mistake_tags": list(MISTAKE_TAGS)}
-
-
-@router.patch("/journal/trades/{trade_id}")
-async def journal_edit(trade_id: int, body: TradeEdit, _: AdminUser, session: SessionDep) -> dict[str, Any]:
-    t = await session.get(JournalTrade, trade_id)
-    if t is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trade not found")
-    for k, v in body.model_dump(exclude_unset=True).items():
-        setattr(t, k, v)
-    await session.commit()
-    return _trade_out(t)
-
-
-@router.delete("/journal/trades/{trade_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def journal_delete(trade_id: int, user: AdminUser, request: Request, session: SessionDep) -> Response:
-    t = await session.get(JournalTrade, trade_id)
-    if t is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trade not found")
-    await session.delete(t)
-    await record_audit(
-        session,
-        action="journal.delete",
-        outcome="success",
-        actor_id=user.id,
-        ip=client_ip(request),
-        details={"trade_id": trade_id},
-    )
-    await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/analytics")

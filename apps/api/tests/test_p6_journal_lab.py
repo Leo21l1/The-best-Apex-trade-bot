@@ -176,7 +176,9 @@ async def test_journal_api_import_dedupe_edit_and_analytics(admin_client: httpx.
     assert {g["key"] for g in a["by_strategy"]} == {"orb", "untagged"}
     assert a["mistakes"][0]["tag"] == "moved_stop" and a["planned_vs_actual"]["trades_with_plan"] == 1
     assert a["rules_verified"] is False and any("UNVERIFIED" in n for n in a["notes"])
-    assert (await admin_client.delete(f"/api/journal/trades/{tid}", headers=CSRF)).status_code == 204
+    unconfirmed = await admin_client.delete(f"/api/journal/trades/{tid}", headers=CSRF)
+    assert unconfirmed.status_code == 428  # deletion must repeat the trade id
+    assert (await admin_client.delete(f"/api/journal/trades/{tid}?confirm={tid}", headers=CSRF)).status_code == 204
 
 
 async def _seed_sim(now: datetime, days: int = 12) -> None:
