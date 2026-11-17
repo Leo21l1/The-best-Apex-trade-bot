@@ -1,4 +1,4 @@
-"""Strategy modules A-H.
+"""Strategy modules A-K (I-K are smart-money-concepts setups built on app.research.smc).
 
 All rules are evaluated on closed 5-minute bars (H also reads 15-minute and 1-hour trend).
 Notation: s = +1 for long, -1 for short; ATR = Wilder ATR(14) on 5-minute bars; EMA20/EMA50 on
@@ -443,6 +443,191 @@ class MultiTimeframeTrend(Strategy):
         return conds, extreme - s * 0.25 * a, None
 
 
+def _smc(ctx: MarketContext, tf: Timeframe = Timeframe.M5):
+    """Cached causal SMC analysis of the last 400 closed ``tf`` bars in this context."""
+    from app.research.smc import analyze
+
+    key = ("smc", tf)
+    if key not in ctx._cache:
+        ctx._cache[key] = analyze(ctx.symbol, tf.value, ctx.bars(tf)[-400:], ctx.tick)
+    return ctx._cache[key]
+
+
+def _recent(ctx: MarketContext, p, bars: int) -> bool:
+    """Pattern confirmed within the last ``bars`` closed 5-minute bars."""
+    if p.confirmed_at is None:
+        return False
+    return p.confirmed_at >= ctx.m5[-min(bars, len(ctx.m5))].ts
+
+
+def _nearest_liquidity(ctx: MarketContext, s: int, entry: float) -> float | None:
+    side = "above" if s == 1 else "below"
+    lv = [x["price"] for x in _smc(ctx).liquidity if x["side"] == side and (x["price"] - entry) * s > 0]
+    return min(lv, key=lambda x: abs(x - entry)) if lv else None
+
+
+class SmcSweepShift(Strategy):
+    spec = StrategySpec(
+        id="smc_sweep_mss",
+        code="I",
+        name="Liquidity Sweep + Structure Shift (SMC)",
+        timeframe="5m",
+        required_data="1-minute OHLCV aggregated to closed 5-minute bars (last 400).",
+        eligible_instruments=ALL_SYMBOLS,
+        regime="Any; needs a confirmed sweep rejection followed by a change of character.",
+        entry="Within the last 6 bars: a sell-side (buy-side) sweep with a CONFIRMED REJECTION, then a "
+        "bullish (bearish) CHoCH/MSS that closes after the sweep. Enter at the close.",
+        invalidation="A close beyond the sweep extreme.",
+        stop="Sweep extreme plus/minus 1 tick.",
+        targets="Nearest unswept opposing liquidity level if at least 1R away, then 2R.",
+        time_exit=_TIME_EXIT,
+        testing=_TESTING,
+    )
+    target_r = (1.5, 2.5)
+
+    def _side(self, ctx: MarketContext, s: int) -> Side:
+        a = _smc(ctx)
+        want_sweep = "sell_side_sweep" if s == 1 else "buy_side_sweep"
+        want_dir = "bullish" if s == 1 else "bearish"
+        sweeps = [
+            p for p in a.patterns if p.type == want_sweep and p.status == "confirmed_rejection" and _recent(ctx, p, 6)
+        ]
+        sweep = sweeps[0] if sweeps else None
+        shifts = [
+            p
+            for p in a.patterns
+            if p.type in ("CHoCH", "MSS")
+            and p.direction == want_dir
+            and _recent(ctx, p, 2)
+            and (sweep is None or (p.confirmed_at and sweep.confirmed_at and p.confirmed_at >= sweep.confirmed_at))
+        ]
+        conds = [
+            Condition(
+                "confirmed sweep rejection (6 bars)",
+                sweep is not None,
+                sweep.evidence[0] if sweep else f"no confirmed {want_sweep.replace('_', ' ')}",
+            ),
+            Condition(
+                "structure shift after the sweep (2 bars)",
+                bool(shifts),
+                shifts[0].evidence[0] if shifts else f"no {want_dir} CHoCH/MSS after the sweep",
+            ),
+        ]
+        if sweep is None or not shifts:
+            return conds, None, None
+        stop = sweep.invalidation_price - s * ctx.tick  # type: ignore[operator]
+        entry = ctx.m5[-1].close
+        risk = (entry - stop) * s
+        liq = _nearest_liquidity(ctx, s, entry)
+        targets = None
+        if liq is not None and risk > 0 and (liq - entry) * s >= risk:
+            targets = (liq, entry + s * 2.5 * risk) if (entry + s * 2.5 * risk - liq) * s > 0 else (liq,)
+        return conds, stop, targets
+
+
+class SmcOrderBlockRetest(Strategy):
+    spec = StrategySpec(
+        id="smc_ob_retest",
+        code="J",
+        name="Order Block Retest with Trend (SMC)",
+        timeframe="5m / 1h",
+        required_data="Closed 5-minute and 1-hour bars.",
+        eligible_instruments=ALL_SYMBOLS,
+        regime="1-hour structure trend in the trade direction.",
+        entry="Latest 5-minute bar trades into an unmitigated-or-once-retested order block formed by a "
+        "structure break in the trade direction and closes back outside it on the trend side.",
+        invalidation="A close through the far side of the order block.",
+        stop="Far side of the order block plus/minus 0.1 ATR.",
+        targets="Nearest opposing liquidity level if at least 1R away, else 1.5R and 2.5R.",
+        time_exit=_TIME_EXIT,
+        testing=_TESTING,
+    )
+
+    def _side(self, ctx: MarketContext, s: int) -> Side:
+        a, h1 = _smc(ctx), _smc(ctx, Timeframe.H1)
+        want = "bullish" if s == 1 else "bearish"
+        bar, atr_ = ctx.m5[-1], ctx.atr14[-1] or 0.0
+        obs = [
+            p
+            for p in a.patterns
+            if p.type == f"{want}_order_block" and p.status != "invalidated" and p.extra.get("retests", 0) <= 2
+        ]
+        hit = None
+        for p in obs:
+            touched = bar.low <= p.top if s == 1 else bar.high >= p.bottom
+            closed_out = bar.close > p.top if s == 1 else bar.close < p.bottom
+            if touched and closed_out:
+                hit = p
+                break
+        conds = [
+            Condition("1h structure trend aligned", h1.trend == want, f"1h trend {h1.trend}"),
+            Condition(
+                "retest of a valid order block",
+                hit is not None,
+                f"zone {fmt(hit.bottom)}-{fmt(hit.top)}"
+                if hit
+                else f"{len(obs)} candidate {want} order blocks, none retested on this bar",
+            ),
+        ]
+        if hit is None:
+            return conds, None, None
+        stop = (hit.bottom - 0.1 * atr_) if s == 1 else (hit.top + 0.1 * atr_)
+        entry = bar.close
+        liq = _nearest_liquidity(ctx, s, entry)
+        risk = (entry - stop) * s
+        targets = (liq,) if liq is not None and risk > 0 and (liq - entry) * s >= risk else None
+        return conds, stop, targets
+
+
+class SmcFvgRetest(Strategy):
+    spec = StrategySpec(
+        id="smc_fvg_retest",
+        code="K",
+        name="Fair Value Gap Retest with Displacement (SMC)",
+        timeframe="5m",
+        required_data="Closed 5-minute bars.",
+        eligible_instruments=ALL_SYMBOLS,
+        regime="5-minute structure trend in the trade direction; gap created by a displacement leg.",
+        entry="Latest bar trades into a partially filled (< 100%) gap aligned with the structure trend, "
+        "which was confirmed within the last 24 bars, and closes on the gap's trend side.",
+        invalidation="A close through the far side of the gap.",
+        stop="Far side of the gap plus/minus 0.1 ATR.",
+        targets="1.5R and 2.5R.",
+        time_exit=_TIME_EXIT,
+        testing=_TESTING,
+    )
+
+    def _side(self, ctx: MarketContext, s: int) -> Side:
+        a = _smc(ctx)
+        want = "bullish" if s == 1 else "bearish"
+        bar, atr_ = ctx.m5[-1], ctx.atr14[-1] or 0.0
+        gaps = [
+            p
+            for p in a.patterns
+            if p.type == f"{want}_fvg" and p.status in ("open", "partially_filled") and _recent(ctx, p, 24)
+        ]
+        hit = None
+        for p in gaps:
+            if (s == 1 and bar.low <= p.top and bar.close > p.top) or (
+                s == -1 and bar.high >= p.bottom and bar.close < p.bottom
+            ):
+                hit = p
+                break
+        conds = [
+            Condition("5m structure trend aligned", a.trend == want, f"5m trend {a.trend}"),
+            Condition(
+                "retest of an unfilled gap",
+                hit is not None,
+                f"gap {fmt(hit.bottom)}-{fmt(hit.top)}, {hit.extra.get('fill', 0):.0%} filled"
+                if hit
+                else f"{len(gaps)} recent {want} gaps, none retested on this bar",
+            ),
+        ]
+        if hit is None:
+            return conds, None, None
+        return conds, (hit.bottom - 0.1 * atr_) if s == 1 else (hit.top + 0.1 * atr_), None
+
+
 STRATEGIES: tuple[Strategy, ...] = (
     OpeningRangeBreakout(),
     VwapTrendContinuation(),
@@ -452,5 +637,8 @@ STRATEGIES: tuple[Strategy, ...] = (
     VolatilityExpansion(),
     MeanReversion(),
     MultiTimeframeTrend(),
+    SmcSweepShift(),
+    SmcOrderBlockRetest(),
+    SmcFvgRetest(),
 )
 STRATEGY_BY_ID = {s.spec.id: s for s in STRATEGIES}

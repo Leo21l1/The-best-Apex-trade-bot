@@ -69,7 +69,7 @@ async def test_scan_builds_radar_stores_signal_once_and_alerts() -> None:
     assert by_tf["5m"]["trend"] in {"up", "down", "flat"} and by_tf["5m"]["rsi"] is not None
     # Five days of history cannot support a weekly EMA50: reported, not invented.
     assert by_tf["1w"]["trend"] is None and "insufficient history" in by_tf["1w"]["note"]
-    assert len(sym["evaluations"]) == 8
+    assert len(sym["evaluations"]) == 11
     assert sym["levels"]["prior_day_high"] is not None
 
     opps = doc["opportunities"]
@@ -199,7 +199,7 @@ async def test_scanner_api(admin_client: httpx.AsyncClient) -> None:
     assert all(c["strategy_id"] == sid for c in filtered["candidates"])
 
     strat = (await admin_client.get("/api/strategies")).json()
-    assert len(strat["strategies"]) == 8
+    assert len(strat["strategies"]) == 11
     assert all(s["validation"]["validated"] is False for s in strat["strategies"])
     assert strat["validation_standards"]["min_trades"] == 100
 

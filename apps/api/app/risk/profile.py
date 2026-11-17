@@ -17,7 +17,8 @@ from app.risk.engine import RuleSet
 
 PROFILE = "apex-50k-eod-evaluation"
 PROFILE_LABEL = "Apex Trader Funding · $50K · End-of-Day (EOD) Evaluation"
-_EOD_EVAL = "https://apextraderfunding.com/help-center/eod-trailing-drawdown-accounts/eod-evaluations/"
+_EOD_EVAL = "https://apextraderfunding.com/help-center/eod-accounts/eod-evaluations/"
+_SIZING = "https://apextraderfunding.com/help-center/additional-helpful-items/position-sizing-evaluation/"
 _EOD_DD = "https://apextraderfunding.com/help-center/eod-trailing-drawdown-accounts/eod-drawdown-explained/"
 _HELP = "https://apextraderfunding.com/help-center/"
 
@@ -27,7 +28,7 @@ SEED: tuple[tuple[str, str, str, str, bool, str], ...] = (
     ("profit_target", "Evaluation profit target", "money", "3000", True, _EOD_EVAL),
     ("max_drawdown", "Maximum EOD drawdown", "money", "2000", True, _EOD_EVAL),
     ("daily_loss_limit", "Daily loss limit", "money", "1000", True, _EOD_EVAL),
-    ("max_contracts", "Maximum standard contracts (1 micro = 0.1)", "contracts", "6", True, _EOD_EVAL),
+    ("max_contracts", "Maximum standard contracts (1 micro = 0.1)", "contracts", "6", True, _SIZING),
     (
         "drawdown_stop_level",
         "Balance level at which the threshold stops trailing (blank = none)",
@@ -74,9 +75,9 @@ SEED: tuple[tuple[str, str, str, str, bool, str], ...] = (
         "micro_equivalence",
         "Contract limits and micro equivalents",
         "text",
-        "10 micro contracts count as 1 standard contract.",
+        "10 micro contracts count as 1 standard contract (6 standard or 60 micro, or combinations).",
         True,
-        _EOD_EVAL,
+        _SIZING,
     ),
     ("news_trading", "News trading restrictions", "text", "Unknown. Check the official rules.", True, _HELP),
     (

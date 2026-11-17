@@ -198,8 +198,8 @@ def test_closed_only_drops_forming_bar() -> None:
 
 
 def test_every_strategy_has_a_complete_specification() -> None:
-    assert [s.spec.code for s in STRATEGIES] == list("ABCDEFGH")
-    assert len(STRATEGY_BY_ID) == 8
+    assert [s.spec.code for s in STRATEGIES] == list("ABCDEFGHIJK")
+    assert len(STRATEGY_BY_ID) == 11
     for s in STRATEGIES:
         spec = s.spec
         for field in (
