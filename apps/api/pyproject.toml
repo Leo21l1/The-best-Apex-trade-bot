@@ -1,0 +1,48 @@
+[project]
+name = "apex-api"
+version = "0.1.0"
+description = "PROJECT APEX — analysis-only futures trading intelligence API"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.160,<0.170",
+    "uvicorn[standard]>=0.50,<0.60",
+    "pydantic>=2.12,<3",
+    "pydantic-settings>=2.10,<3",
+    "sqlalchemy[asyncio]>=2.0.40,<2.2",
+    "asyncpg>=0.30,<0.40",
+    "alembic>=1.16,<2",
+    "redis>=6,<9",
+    "pyjwt>=2.10,<3",
+    "argon2-cffi>=25,<26",
+    "email-validator>=2.2,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<10",
+    "pytest-asyncio>=1.0,<2",
+    "httpx>=0.28,<0.30",
+    "ruff>=0.12,<0.20",
+    "pip-audit>=2.9,<3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC", "RUF"]
+ignore = ["S101", "B008", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]

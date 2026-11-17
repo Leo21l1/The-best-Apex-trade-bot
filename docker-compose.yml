@@ -1,0 +1,66 @@
+# PROJECT APEX local stack. Usage: cp .env.example .env && docker compose up --build
+name: project-apex
+
+x-api-env: &api-env
+  APEX_ENVIRONMENT: ${APEX_ENVIRONMENT:-development}
+  APEX_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-apex}:${POSTGRES_PASSWORD:-apex_dev_password}@postgres:5432/${POSTGRES_DB:-apex}
+  APEX_REDIS_URL: redis://redis:6379/0
+  APEX_SECRET_KEY: ${APEX_SECRET_KEY:?set APEX_SECRET_KEY in .env}
+  APEX_BOOTSTRAP_TOKEN: ${APEX_BOOTSTRAP_TOKEN:-}
+  APEX_COOKIE_SECURE: ${APEX_COOKIE_SECURE:-false}
+  APEX_CORS_ORIGINS: '["http://localhost:3000"]'
+  APEX_ANTHROPIC_API_KEY: ${APEX_ANTHROPIC_API_KEY:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-apex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apex_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-apex}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
+    ports: ["127.0.0.1:5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    environment: *api-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports: ["127.0.0.1:8000:8000"]
+
+  worker:
+    build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    command: ["python", "-m", "app.workers.main"]
+    environment: *api-env
+    healthcheck: { disable: true }
+    depends_on:
+      api: { condition: service_healthy }
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+      args:
+        APEX_API_ORIGIN: http://api:8000
+        NEXT_PUBLIC_APEX_WS_URL: ws://localhost:8000/api/ws
+    depends_on:
+      api: { condition: service_healthy }
+    ports: ["127.0.0.1:3000:3000"]
+
+volumes:
+  pgdata:
+  redisdata:
