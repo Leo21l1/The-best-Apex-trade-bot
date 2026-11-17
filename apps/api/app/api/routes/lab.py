@@ -87,7 +87,7 @@ def _run_out(r: BacktestRun, full: bool) -> dict[str, Any]:
 
 
 @router.post("/backtests", status_code=status.HTTP_202_ACCEPTED)
-async def create_backtest(body: BacktestIn, user: CurrentUser, request: Request, session: SessionDep) -> dict[str, Any]:
+async def create_backtest(body: BacktestIn, user: AdminUser, request: Request, session: SessionDep) -> dict[str, Any]:
     s = get_settings()
     if s.market_data_provider == "none":
         raise HTTPException(status.HTTP_409_CONFLICT, "No market data provider configured; nothing to test on.")
@@ -208,24 +208,24 @@ async def _mutate(session: SessionDep, fn: Any) -> dict[str, Any]:
 
 
 @router.post("/paper/orders")
-async def paper_order(body: OrderIn, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
+async def paper_order(body: OrderIn, _: AdminUser, session: SessionDep) -> dict[str, Any]:
     if get_settings().market_data_provider == "none":
         raise HTTPException(status.HTTP_409_CONFLICT, "No market data provider configured; orders cannot fill.")
     return await _mutate(session, lambda b: b.submit(body.model_dump(), datetime.now(UTC)))
 
 
 @router.post("/paper/orders/{order_id}/cancel")
-async def paper_cancel(order_id: int, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
+async def paper_cancel(order_id: int, _: AdminUser, session: SessionDep) -> dict[str, Any]:
     return await _mutate(session, lambda b: b.cancel(order_id, datetime.now(UTC)))
 
 
 @router.post("/paper/flatten")
-async def paper_flatten(_: CurrentUser, session: SessionDep) -> dict[str, Any]:
+async def paper_flatten(_: AdminUser, session: SessionDep) -> dict[str, Any]:
     return await _mutate(session, lambda b: b.flatten(datetime.now(UTC)))
 
 
 @router.post("/paper/reset")
-async def paper_reset(user: CurrentUser, request: Request, session: SessionDep) -> dict[str, Any]:
+async def paper_reset(user: AdminUser, request: Request, session: SessionDep) -> dict[str, Any]:
     s = get_settings()
     acct = await get_account(session, s)
     acct.state = new_state(await config_from_rules(session, s))
@@ -298,7 +298,7 @@ def _trade_out(t: JournalTrade) -> dict[str, Any]:
 
 
 @router.post("/journal/import")
-async def journal_import(body: CsvIn, user: CurrentUser, request: Request, session: SessionDep) -> dict[str, Any]:
+async def journal_import(body: CsvIn, user: AdminUser, request: Request, session: SessionDep) -> dict[str, Any]:
     from zoneinfo import ZoneInfoNotFoundError
 
     s = get_settings()
@@ -384,7 +384,7 @@ async def journal_trades(
 
 
 @router.patch("/journal/trades/{trade_id}")
-async def journal_edit(trade_id: int, body: TradeEdit, _: CurrentUser, session: SessionDep) -> dict[str, Any]:
+async def journal_edit(trade_id: int, body: TradeEdit, _: AdminUser, session: SessionDep) -> dict[str, Any]:
     t = await session.get(JournalTrade, trade_id)
     if t is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trade not found")

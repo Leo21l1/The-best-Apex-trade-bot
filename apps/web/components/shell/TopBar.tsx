@@ -65,6 +65,9 @@ export function TopBar({
           title={`Realtime channel: ${connection}`}
           aria-label={`Realtime channel ${connection}`}
         />
+        {user?.role === "viewer" && (
+          <span className="rounded border border-line px-2 py-0.5 text-[11px] text-muted" title="Viewers cannot change data">Read-only</span>
+        )}
         <AlertsBell />
         <Clock />
         {user && (

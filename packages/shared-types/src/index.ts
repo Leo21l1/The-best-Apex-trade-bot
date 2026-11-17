@@ -733,3 +733,14 @@ export interface AnalyticsResponse {
   rules_verified: boolean;
   notes: string[];
 }
+
+// ---- Phase 7: users -------------------------------------------------------------------------
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  role: "admin" | "viewer";
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}

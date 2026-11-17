@@ -6,6 +6,7 @@ import { useSession } from "@/hooks/useSession";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { humanizeComponent } from "@/lib/format";
 import { TRADER_PROFILE } from "@/lib/profile";
+import { ChangePassword, Users } from "./Security";
 
 const INTEGRATIONS = ["market_data", "tradovate_readonly", "ai_copilot", "apex_rule_profile"];
 
@@ -21,7 +22,7 @@ export function Settings() {
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between"><dt className="text-muted">Execution mode</dt><dd className="font-mono">ANALYSIS_ONLY (locked)</dd></div>
             <div className="flex justify-between"><dt className="text-muted">Live order routing</dt><dd className="font-mono">Not implemented</dd></div>
-            <div className="flex justify-between"><dt className="text-muted">Paper trading</dt><dd className="font-mono">Isolated simulator (Phase 6)</dd></div>
+            <div className="flex justify-between"><dt className="text-muted">Paper trading</dt><dd className="font-mono">Isolated simulator</dd></div>
           </dl>
           <p className="mt-3 text-xs text-faint">
             Execution mode cannot be changed from the UI or environment. Automated order entry,
@@ -67,10 +68,14 @@ export function Settings() {
             ))}
           </ul>
           <p className="mt-3 text-xs text-faint">
-            Editable watchlists arrive with the scanner (Phase 3). Styles:{" "}
+            Star instruments on the Market Radar to build your watchlist. Styles:{" "}
             {TRADER_PROFILE.styles.join(", ")}.
           </p>
         </Panel>
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <ChangePassword />
+        {user?.role === "admin" && <Users selfEmail={user.email} />}
       </div>
       <div className="mt-4">
         <Callout tone="warn" title="Credentials">

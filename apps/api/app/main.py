@@ -91,6 +91,10 @@ def create_app() -> FastAPI:
         response.headers["x-request-id"] = rid
         for k, v in SECURITY_HEADERS.items():
             response.headers.setdefault(k, v)
+        if not request.url.path.startswith("/api/docs"):
+            response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+        if s.cookie_secure:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         log_event(
             log,
             "request",
@@ -110,6 +114,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(auth.users_router, prefix="/api")
     app.include_router(market.router, prefix="/api")
     app.include_router(scanner.router, prefix="/api")
     app.include_router(account.router, prefix="/api")

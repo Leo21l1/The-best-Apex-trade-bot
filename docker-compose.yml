@@ -13,6 +13,10 @@ x-api-env: &api-env
   APEX_MARKET_DATA_PROVIDER: ${APEX_MARKET_DATA_PROVIDER:-none}
   APEX_MARKET_DATA_BACKFILL_HOURS: ${APEX_MARKET_DATA_BACKFILL_HOURS:-72}
   APEX_DATABENTO_API_KEY: ${APEX_DATABENTO_API_KEY:-}
+  APEX_COPILOT_MODEL: ${APEX_COPILOT_MODEL:-claude-opus-5-5}
+  APEX_CALENDAR_ICS_URLS: ${APEX_CALENDAR_ICS_URLS:-[]}
+  # The web container proxies /api/* from inside the compose network.
+  APEX_TRUSTED_PROXIES: '["127.0.0.1", "::1", "172.16.0.0/12"]'
 
 services:
   postgres:

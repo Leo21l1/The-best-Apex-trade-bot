@@ -78,8 +78,19 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             }
         )
 
+    user_id = user.id
+
+    async def still_authorised() -> bool:
+        """Re-check the session so logout, deactivation or a password change closes the socket."""
+        async with get_sessionmaker()() as session:
+            current = await resolve_user(session, token)
+        return current is not None and current.id == user_id
+
     async def publisher() -> None:
         while True:
+            if not await still_authorised():
+                await ws.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
             st = await system_status()
             await send("system.status", st.model_dump(mode="json"))
             await asyncio.sleep(STATUS_INTERVAL_S)

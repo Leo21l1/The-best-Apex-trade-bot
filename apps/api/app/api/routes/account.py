@@ -195,7 +195,7 @@ async def list_snapshots(
 
 
 @router.post("/account/snapshots", response_model=SnapshotOut, status_code=status.HTTP_201_CREATED)
-async def create_snapshot(body: SnapshotIn, user: CurrentUser, request: Request, session: SessionDep) -> SnapshotOut:
+async def create_snapshot(body: SnapshotIn, user: AdminUser, request: Request, session: SessionDep) -> SnapshotOut:
     now = datetime.now(UTC)
     as_of = body.as_of.astimezone(UTC) if body.as_of else now
     if (as_of - now).total_seconds() > 120:
@@ -258,7 +258,7 @@ async def delete_snapshot(snapshot_id: int, user: AdminUser, request: Request, s
 
 
 @router.post("/account/import-csv", response_model=CsvImportOut)
-async def import_csv(body: CsvImportIn, user: CurrentUser, request: Request, session: SessionDep) -> CsvImportOut:
+async def import_csv(body: CsvImportIn, user: AdminUser, request: Request, session: SessionDep) -> CsvImportOut:
     """Import end-of-day balances. Use ``dry_run`` to preview. Nothing is imported if any row fails."""
     res = parse_balance_csv(body.csv)
     imported = 0

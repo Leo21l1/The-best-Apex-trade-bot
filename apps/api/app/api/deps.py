@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import uuid
 from typing import Annotated
 
@@ -27,14 +28,28 @@ def client_ip(request: Request) -> str:
     be forged by the client).
     """
     peer = request.client.host if request.client else "unknown"
-    trusted = set(get_settings().trusted_proxies)
-    if peer not in trusted:
+    if not _is_trusted(peer):
         return peer
     forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
     for addr in reversed(forwarded):
-        if addr not in trusted:
+        if not _is_trusted(addr):
             return addr[:64]
     return peer
+
+
+def _is_trusted(addr: str) -> bool:
+    """True if ``addr`` is a configured trusted proxy (exact address or CIDR range)."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    for entry in get_settings().trusted_proxies:
+        try:
+            if ip in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def rate_limit_key(request: Request) -> tuple[str, bool]:

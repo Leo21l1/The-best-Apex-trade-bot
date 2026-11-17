@@ -1,16 +1,27 @@
 from __future__ import annotations
 
 import hmac
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
-from app.api.deps import CurrentUser, SessionDep, auth_rate_limit, client_ip
+from app.api.deps import AdminUser, CurrentUser, SessionDep, auth_rate_limit, client_ip
 from app.core.config import Environment, get_settings
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import Role, User
-from app.schemas.auth import BootstrapRequest, BootstrapStatus, Credentials, SessionOut, UserOut
+from app.schemas.auth import (
+    BootstrapRequest,
+    BootstrapStatus,
+    Credentials,
+    PasswordChange,
+    SessionOut,
+    UserAdminOut,
+    UserCreate,
+    UserOut,
+    UserUpdate,
+)
 from app.services.audit import record_audit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -58,6 +69,8 @@ async def bootstrap_status(session: SessionDep) -> BootstrapStatus:
 async def bootstrap(body: BootstrapRequest, request: Request, response: Response, session: SessionDep) -> SessionOut:
     """Create the first administrator. Disabled permanently once any user exists."""
     s = get_settings()
+    # Serialise concurrent bootstrap attempts so at most one first admin can ever be created.
+    await session.execute(text("SELECT pg_advisory_xact_lock(724001)"))
     if await _user_count(session) > 0:
         raise HTTPException(status.HTTP_409_CONFLICT, "Already initialised")
     if _bootstrap_token_required():
@@ -151,3 +164,86 @@ async def logout(user: CurrentUser, request: Request, response: Response, sessio
 @router.get("/me", response_model=UserOut)
 async def me(user: CurrentUser) -> UserOut:
     return UserOut.model_validate(user)
+
+
+@router.post("/password", dependencies=[Depends(auth_rate_limit)])
+async def change_password(
+    body: PasswordChange, user: CurrentUser, request: Request, response: Response, session: SessionDep
+) -> SessionOut:
+    """Change your password. Every other session is signed out; this one gets a fresh cookie."""
+    if not verify_password(body.current_password, user.password_hash):
+        await record_audit(
+            session, action="auth.password_change", outcome="failure", actor_id=user.id, ip=client_ip(request)
+        )
+        await session.commit()
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "New password must differ from the current one")
+    user.password_hash = hash_password(body.new_password)
+    user.token_version += 1
+    await record_audit(
+        session, action="auth.password_change", outcome="success", actor_id=user.id, ip=client_ip(request)
+    )
+    await session.commit()
+    token, expires = create_access_token(str(user.id), user.token_version)
+    _set_session_cookie(response, token, expires)
+    return SessionOut(user=UserOut.model_validate(user), expires_at=expires)
+
+
+# --- user management (admin) -----------------------------------------------------------------
+
+users_router = APIRouter(prefix="/users", tags=["users"])
+
+
+@users_router.get("", response_model=list[UserAdminOut])
+async def list_users(_: AdminUser, session: SessionDep) -> list[UserAdminOut]:
+    rows = (await session.scalars(select(User).order_by(User.created_at))).all()
+    return [UserAdminOut.model_validate(u) for u in rows]
+
+
+@users_router.post("", response_model=UserAdminOut, status_code=status.HTTP_201_CREATED)
+async def create_user(body: UserCreate, admin: AdminUser, request: Request, session: SessionDep) -> UserAdminOut:
+    email = body.email.lower()
+    if await session.scalar(select(User).where(User.email == email)):
+        raise HTTPException(status.HTTP_409_CONFLICT, "A user with this email exists")
+    user = User(email=email, password_hash=hash_password(body.password), role=body.role)
+    session.add(user)
+    await session.flush()
+    await record_audit(
+        session,
+        action="users.create",
+        outcome="success",
+        actor_id=admin.id,
+        ip=client_ip(request),
+        details={"user_id": str(user.id), "role": body.role},
+    )
+    await session.commit()
+    await session.refresh(user)
+    return UserAdminOut.model_validate(user)
+
+
+@users_router.patch("/{user_id}", response_model=UserAdminOut)
+async def update_user(
+    user_id: uuid.UUID, body: UserUpdate, admin: AdminUser, request: Request, session: SessionDep
+) -> UserAdminOut:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if user.id == admin.id and (body.is_active is False or body.role == Role.VIEWER.value):
+        raise HTTPException(status.HTTP_409_CONFLICT, "You cannot deactivate or demote yourself")
+    changes = body.model_dump(exclude_unset=True)
+    for k, v in changes.items():
+        setattr(user, k, v)
+    if changes:
+        user.token_version += 1  # role or status changes take effect immediately
+    await record_audit(
+        session,
+        action="users.update",
+        outcome="success",
+        actor_id=admin.id,
+        ip=client_ip(request),
+        details={"user_id": str(user_id), **{k: str(v) for k, v in changes.items()}},
+    )
+    await session.commit()
+    await session.refresh(user)
+    return UserAdminOut.model_validate(user)

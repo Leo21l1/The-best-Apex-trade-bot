@@ -20,6 +20,14 @@ def test_forwarded_for_is_trusted_only_from_configured_proxies() -> None:
     assert client_ip(req("127.0.0.1", "198.51.100.7, 127.0.0.1")) == "198.51.100.7"
     assert client_ip(req("127.0.0.1")) == "127.0.0.1"
     assert client_ip(req("::1", "2001:db8::1")) == "2001:db8::1"
+    assert client_ip(req("not-an-ip", "1.2.3.4")) == "not-an-ip"
+
+
+def test_trusted_proxies_accept_cidr_ranges() -> None:
+    get_settings().trusted_proxies = ["127.0.0.1", "172.16.0.0/12", "garbage"]
+    assert client_ip(req("172.18.0.5", "198.51.100.7")) == "198.51.100.7"  # docker network peer
+    assert client_ip(req("172.32.0.5", "198.51.100.7")) == "172.32.0.5"  # outside the range
+    assert client_ip(req("172.18.0.5", "198.51.100.7, 172.18.0.9")) == "198.51.100.7"
 
 
 async def test_signed_in_traffic_is_limited_per_user_not_per_shared_ip(
