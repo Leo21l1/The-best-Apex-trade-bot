@@ -2,6 +2,7 @@
 
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, Panel, StatePill } from "@/components/ui/primitives";
+import { IntegrationTests } from "./IntegrationTests";
 import { useSession } from "@/hooks/useSession";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { humanizeComponent } from "@/lib/format";
@@ -75,6 +76,7 @@ export function Settings() {
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <ChangePassword />
+        {user?.role === "admin" && <IntegrationTests />}
         {user?.role === "admin" && <Users selfEmail={user.email} />}
       </div>
       <div className="mt-4">
