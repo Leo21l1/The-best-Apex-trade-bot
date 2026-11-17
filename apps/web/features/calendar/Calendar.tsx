@@ -131,6 +131,7 @@ export function Calendar() {
 
         {admin ? (
           <div className="space-y-4">
+            <ForexFactorySync onDone={load} />
             <IcsImport onDone={load} />
             <ManualEvent onDone={load} />
           </div>
@@ -139,6 +140,49 @@ export function Calendar() {
         )}
       </div>
     </>
+  );
+}
+
+interface FfResult { events: number; high?: number; errors: string[] }
+
+function ForexFactorySync({ onDone }: { onDone: () => void }) {
+  const [res, setRes] = useState<FfResult | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (events?: unknown) => {
+    setErr(null); setBusy(true);
+    try {
+      const r = await api<FfResult>("/api/calendar/sync-forexfactory", { method: "POST", body: events === undefined ? {} : { events } });
+      setRes(r);
+      onDone();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Sync failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Panel title="ForexFactory calendar">
+      <p className="mb-2 text-xs text-muted">
+        This week&apos;s USD events from the ForexFactory export, with its impact rating (High = red folder). The worker
+        refreshes it hourly; High and Medium events open a news window for the instruments they affect.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={() => void run()} data-testid="ff-sync"
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-bg disabled:opacity-50">{busy ? "Syncing…" : "Sync now"}</button>
+        <label className="text-xs text-muted">
+          or upload the export (.json)
+          <input type="file" accept=".json,application/json" aria-label="ForexFactory export file" className="ml-2 text-xs"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              try { await run(JSON.parse(await f.text())); } catch { setErr("The file is not valid JSON."); }
+            }} />
+        </label>
+      </div>
+      {res && <p className="mt-2 text-xs text-up" data-testid="ff-result">Stored {res.events} events ({res.high ?? 0} high impact){res.errors.length ? ` · ${res.errors.length} skipped` : ""}.</p>}
+      {err && <p className="mt-2 text-xs text-down">{err}</p>}
+    </Panel>
   );
 }
 

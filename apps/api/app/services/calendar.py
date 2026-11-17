@@ -257,3 +257,120 @@ async def news_exposure(session: AsyncSession, symbol: str, now: datetime, pre: 
         "summary": "Inside event window: " + ", ".join(f"{e.title} ({e.ts.astimezone(ET):%H:%M} ET)" for e in hits),
         "events": [{"title": e.title, "ts": e.ts.isoformat(), "importance": e.importance} for e in hits],
     }
+
+
+# --- ForexFactory weekly calendar export ---------------------------------------------------------
+#
+# ForexFactory publishes its weekly calendar as a downloadable export (JSON). Each item has a
+# title, currency ("country"), ISO date with offset, impact (High / Medium / Low / Holiday),
+# forecast and previous. The impact level is ForexFactory's own rating: High = "red folder".
+# Holidays are skipped (exchange holidays come from the CME calendar). The feed is rate-limited by
+# its publisher, so the worker fetches it at most once an hour.
+
+FF_IMPACT = {"high": "high", "medium": "medium", "low": "low"}
+
+
+@dataclass(frozen=True, slots=True)
+class FFEvent:
+    uid: str
+    ts: datetime
+    title: str
+    currency: str
+    impact: str  # high | medium | low
+    forecast: str | None
+    previous: str | None
+
+
+def parse_forexfactory(data: Any, currencies: Sequence[str] = ("USD",)) -> tuple[list[FFEvent], list[str]]:
+    """Parse the ForexFactory JSON export. Unknown or malformed items are reported, never guessed."""
+    if not isinstance(data, list):
+        return [], ["Expected a JSON list of events."]
+    wanted = {c.upper() for c in currencies}
+    out: list[FFEvent] = []
+    errors: list[str] = []
+    for i, it in enumerate(data[:5000]):
+        if not isinstance(it, dict):
+            errors.append(f"item {i}: not an object")
+            continue
+        cur = str(it.get("country") or "").upper()
+        impact = FF_IMPACT.get(str(it.get("impact") or "").lower())
+        title = str(it.get("title") or "").strip()[:250]
+        if cur not in wanted or impact is None or not title:
+            continue  # other currency, Holiday / non-economic, or empty
+        try:
+            ts = datetime.fromisoformat(str(it["date"]))
+        except (KeyError, ValueError):
+            errors.append(f"item {i}: bad date {it.get('date')!r}")
+            continue
+        if ts.tzinfo is None:
+            errors.append(f"item {i}: date without a time zone")
+            continue
+        ts = ts.astimezone(UTC)
+        day = ts.astimezone(ET).date().isoformat()
+        uid = "ff:" + hashlib.sha1(f"{cur}|{title}|{day}".encode(), usedforsecurity=False).hexdigest()[:24]
+        out.append(
+            FFEvent(
+                uid=uid,
+                ts=ts,
+                title=title,
+                currency=cur,
+                impact=impact,
+                forecast=(str(it["forecast"]) or None) if it.get("forecast") not in (None, "") else None,
+                previous=(str(it["previous"]) or None) if it.get("previous") not in (None, "") else None,
+            )
+        )
+    return out, errors
+
+
+def ff_affected(title: str, currency: str, impact: str) -> tuple[str, list[str]]:
+    """Category and affected instruments: the keyword rules first, then ForexFactory's impact."""
+    category, _imp, affected = classify(title)
+    if affected:
+        return category, affected
+    if currency == "USD":
+        return category, list(ALL) if impact == "high" else list(EQUITY) if impact == "medium" else []
+    return category, list(METALS + ENERGY) if impact == "high" else []
+
+
+async def upsert_ff_events(session: AsyncSession, events: Sequence[FFEvent], source_ref: str) -> int:
+    """Insert or update ForexFactory events; importance is ForexFactory's impact rating."""
+    for e in events:
+        category, affected = ff_affected(e.title, e.currency, e.impact)
+        title = e.title if e.currency == "USD" else f"{e.currency} {e.title}"
+        stmt = insert(EconomicEvent).values(
+            uid=e.uid,
+            ts=e.ts,
+            title=title[:300],
+            category=category,
+            importance=e.impact,
+            affected=affected,
+            country=e.currency[:8],
+            source="forexfactory",
+            source_ref=source_ref[:500],
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["uid"],
+            set_={
+                "ts": stmt.excluded.ts,
+                "title": stmt.excluded.title,
+                "category": stmt.excluded.category,
+                "importance": stmt.excluded.importance,
+                "affected": stmt.excluded.affected,
+            },
+        )
+        await session.execute(stmt)
+    return len(events)
+
+
+async def sync_forexfactory(session: AsyncSession, client: Any, url: str, currencies: Sequence[str]) -> dict[str, Any]:
+    """Download the export once and store it. Raises httpx errors to the caller."""
+    r = await client.get(url)
+    r.raise_for_status()
+    try:
+        data = r.json()
+    except ValueError:
+        return {"events": 0, "errors": ["The response was not JSON (the feed may be rate-limiting requests)."]}
+    events, errors = parse_forexfactory(data, currencies)
+    n = await upsert_ff_events(session, events, url)
+    await session.commit()
+    return {"events": n, "high": sum(e.impact == "high" for e in events), "errors": errors[:20]}

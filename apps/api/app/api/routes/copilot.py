@@ -238,6 +238,57 @@ async def import_ics(body: IcsIn, user: AdminUser, request: Request, session: Se
     }
 
 
+class ForexFactoryIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    #: Optional: the export file's contents (a JSON list) when the feed cannot be reached directly.
+    events: list[dict[str, Any]] | None = Field(default=None, max_length=5000)
+
+
+@router.post("/calendar/sync-forexfactory")
+async def sync_forexfactory_now(
+    body: ForexFactoryIn, user: AdminUser, request: Request, session: SessionDep
+) -> dict[str, Any]:
+    """Fetch the ForexFactory weekly export now (or store an uploaded copy of it)."""
+    import httpx
+
+    from app.services.calendar import parse_forexfactory, sync_forexfactory, upsert_ff_events
+
+    s = get_settings()
+    if body.events is not None:
+        events, errors = parse_forexfactory(body.events, s.calendar_forexfactory_currencies)
+        n = await upsert_ff_events(session, events, "uploaded ForexFactory export")
+        await session.commit()
+        out: dict[str, Any] = {"events": n, "high": sum(e.impact == "high" for e in events), "errors": errors[:20]}
+    else:
+        try:
+            async with httpx.AsyncClient(
+                timeout=30, follow_redirects=True, headers={"User-Agent": "project-apex-calendar/1.0"}
+            ) as client:
+                out = await sync_forexfactory(
+                    session, client, s.calendar_forexfactory_url, s.calendar_forexfactory_currencies
+                )
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                f"ForexFactory returned HTTP {exc.response.status_code}"
+                + (" (rate limited: try again in a few minutes)" if exc.response.status_code == 429 else ""),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, f"Could not reach ForexFactory: {type(exc).__name__}"
+            ) from exc
+    await record_audit(
+        session,
+        action="calendar.forexfactory",
+        outcome="success",
+        actor_id=user.id,
+        ip=client_ip(request),
+        details={"events": out["events"], "uploaded": body.events is not None},
+    )
+    await session.commit()
+    return {**out, "source": "ForexFactory weekly export", "currencies": s.calendar_forexfactory_currencies}
+
+
 @router.post("/calendar/events", status_code=status.HTTP_201_CREATED)
 async def add_event(body: EventIn, user: AdminUser, request: Request, session: SessionDep) -> dict[str, Any]:
     ev = ParsedEvent(uid=f"manual-{uuid.uuid4().hex}", ts=body.ts.astimezone(UTC), title=body.title)

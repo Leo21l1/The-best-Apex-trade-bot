@@ -16,6 +16,7 @@ x-api-env: &api-env
   APEX_DATABENTO_ROLL_RULE: ${APEX_DATABENTO_ROLL_RULE:-v}
   APEX_COPILOT_MODEL: ${APEX_COPILOT_MODEL:-claude-opus-5-5}
   APEX_CALENDAR_ICS_URLS: ${APEX_CALENDAR_ICS_URLS:-[]}
+  APEX_CALENDAR_FOREXFACTORY: ${APEX_CALENDAR_FOREXFACTORY:-true}
   # The web container proxies /api/* from inside the compose network.
   APEX_TRUSTED_PROXIES: '["127.0.0.1", "::1", "172.16.0.0/12"]'
 

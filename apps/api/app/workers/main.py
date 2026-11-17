@@ -89,6 +89,33 @@ async def calendar_sync(stop: asyncio.Event, interval_s: float = 6 * 3600) -> No
                 pass
 
 
+async def forexfactory_sync(stop: asyncio.Event, interval_s: float = 3600) -> None:
+    """Fetch the ForexFactory weekly calendar export hourly (its publisher rate-limits the feed)."""
+    import httpx
+
+    from app.services.calendar import sync_forexfactory
+
+    s = get_settings()
+    if not s.calendar_forexfactory:
+        return
+    async with httpx.AsyncClient(
+        timeout=30, follow_redirects=True, headers={"User-Agent": "project-apex-calendar/1.0"}
+    ) as client:
+        while not stop.is_set():
+            try:
+                async with get_sessionmaker()() as session:
+                    out = await sync_forexfactory(
+                        session, client, s.calendar_forexfactory_url, s.calendar_forexfactory_currencies
+                    )
+                log_event(log, "forexfactory calendar synced", events=out["events"], errors=len(out["errors"]))
+            except Exception as exc:
+                log_event(log, "forexfactory sync failed", level=logging.WARNING, error=type(exc).__name__)
+            try:
+                await asyncio.wait_for(stop.wait(), interval_s)
+            except TimeoutError:
+                pass
+
+
 async def news_poll(stop: asyncio.Event) -> None:
     """Poll the configured official news feeds (Federal Reserve, EIA) and measure reactions."""
     from datetime import UTC, datetime
@@ -243,6 +270,7 @@ async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
     calendar = asyncio.create_task(calendar_sync(stop))
+    ff = asyncio.create_task(forexfactory_sync(stop))
     lab = asyncio.create_task(lab_jobs(stop))
     news = asyncio.create_task(news_poll(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
@@ -255,7 +283,7 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    tasks = {t for t in (ingestion, scanner, calendar, lab, news) if t is not None}
+    tasks = {t for t in (ingestion, scanner, calendar, ff, lab, news) if t is not None}
     await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if not t.done():

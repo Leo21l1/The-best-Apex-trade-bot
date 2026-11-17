@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     calendar_post_event_minutes: int = Field(default=15, ge=0, le=240)
     #: Official .ics calendar URLs fetched daily by the worker (e.g. the BLS release schedule).
     calendar_ics_urls: list[str] = []
+    #: ForexFactory weekly calendar export (impact-rated: High = red folder). Fetched hourly at most.
+    calendar_forexfactory: bool = True
+    calendar_forexfactory_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    #: Currencies kept from the export. USD events drive US index futures; others are informational.
+    calendar_forexfactory_currencies: list[str] = Field(default_factory=lambda: ["USD"])
 
     @property
     def execution_mode(self) -> ExecutionMode:

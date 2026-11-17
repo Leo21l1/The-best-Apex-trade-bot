@@ -25,6 +25,7 @@ const apiEnv = {
   ANTHROPIC_BASE_URL: "http://127.0.0.1:8020",
   // Deterministic runs: no polling of the live official news feeds.
   APEX_NEWS_SOURCES: "[]",
+  APEX_CALENDAR_FOREXFACTORY: "false",
 };
 
 export default defineConfig({
