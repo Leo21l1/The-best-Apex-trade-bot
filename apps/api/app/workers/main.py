@@ -87,6 +87,33 @@ async def calendar_sync(stop: asyncio.Event, interval_s: float = 6 * 3600) -> No
                 pass
 
 
+async def news_poll(stop: asyncio.Event) -> None:
+    """Poll the configured official news feeds (Federal Reserve, EIA) and measure reactions."""
+    from datetime import UTC, datetime
+
+    import httpx
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.services.news import ingest
+
+    s = get_settings()
+    if not s.news_sources:
+        return
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        while not stop.is_set():
+            try:
+                async with get_sessionmaker()() as session:
+                    res = await ingest(session, get_redis(), client, datetime.now(UTC), s.news_sources)
+                    await session.commit()
+                log_event(log, "news polled", new=res["new"])
+            except (SQLAlchemyError, OSError, RedisError):
+                log.exception("news poll failed")
+            try:
+                await asyncio.wait_for(stop.wait(), s.news_poll_seconds)
+            except TimeoutError:
+                pass
+
+
 async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
     """Run queued backtests and advance paper accounts from newly stored bars."""
     from datetime import UTC, datetime
@@ -150,6 +177,7 @@ async def run(stop: asyncio.Event) -> None:
     ingestion = start_ingestion(stop)
     calendar = asyncio.create_task(calendar_sync(stop))
     lab = asyncio.create_task(lab_jobs(stop))
+    news = asyncio.create_task(news_poll(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
     while not stop.is_set():
         try:
@@ -160,7 +188,7 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    tasks = {t for t in (ingestion, scanner, calendar, lab) if t is not None}
+    tasks = {t for t in (ingestion, scanner, calendar, lab, news) if t is not None}
     await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if not t.done():

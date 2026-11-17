@@ -214,6 +214,44 @@ async def overlays(
         }
         for e in evs
     ]
+    # Published announcements (official feeds) relevant to this instrument.
+    from app.models.calendar import NewsItem
+    from app.services.news import bias as news_bias
+
+    imp = {"CRITICAL": "high", "HIGH": "high", "MODERATE": "medium"}
+    news = (
+        await session.scalars(
+            select(NewsItem)
+            .where(NewsItem.published_at >= start, NewsItem.published_at <= end)
+            .order_by(NewsItem.published_at)
+        )
+    ).all()
+    now = datetime.now(UTC)
+    for n in news:
+        if sym not in (n.instruments or []):
+            continue
+        b = news_bias(n, now, sym)
+        out["events"].append(
+            {
+                "id": -n.id,
+                "kind": "news",
+                "t": bucket(n.published_at),
+                "ts": n.published_at.isoformat(),
+                "title": n.title,
+                "importance": imp.get(n.impact, "low"),
+                "impact": n.impact,
+                "category": n.impact_reason,
+                "affected": n.instruments,
+                "source": n.source_name,
+                "source_ref": n.link,
+                "detected_at": n.detected_at.isoformat(),
+                "bias": f"{b['bias']}. {b['why']}",
+                "explanation": f"Impact {n.impact} by rule: {n.impact_reason}. A relevance classification, not a "
+                "forecast.",
+                "affects_symbol": True,
+            }
+        )
+    out["events"].sort(key=lambda e: e["t"])
     return out
 
 

@@ -25,3 +25,32 @@ class EconomicEvent(Base):
     source: Mapped[str] = mapped_column(String(16))  # ics_file | ics_url | manual
     source_ref: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NewsItem(Base):
+    """A published announcement from a configured source (official RSS feeds), never fabricated.
+
+    ``published_at`` is the source's own timestamp; ``detected_at`` is when APEX first stored it.
+    Replays and reviews may only use an item from its ``detected_at`` onward.
+    """
+
+    __tablename__ = "news_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    uid: Mapped[str] = mapped_column(String(500), unique=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    source_name: Mapped[str] = mapped_column(String(120))
+    credibility: Mapped[str] = mapped_column(String(16))  # official | licensed | unverified
+    title: Mapped[str] = mapped_column(String(500))
+    link: Mapped[str | None] = mapped_column(String(1000))
+    summary: Mapped[str | None] = mapped_column(String(2000))
+    categories: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    #: LOW | MODERATE | HIGH | CRITICAL | UNKNOWN (rule-based relevance, not a forecast)
+    impact: Mapped[str] = mapped_column(String(10))
+    impact_reason: Mapped[str] = mapped_column(String(300))
+    instruments: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    cluster: Mapped[str] = mapped_column(String(500), index=True)
+    #: Observed price reaction per instrument once enough bars exist (None until measured).
+    reaction: Mapped[dict | None] = mapped_column(JSONB)

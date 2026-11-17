@@ -18,6 +18,7 @@ dependencies = [
     "httpx>=0.28,<0.30",
     "tzdata>=2025.1",
     "anthropic>=2.9,<3",
+    "defusedxml>=0.7,<0.8",
 ]
 
 [dependency-groups]

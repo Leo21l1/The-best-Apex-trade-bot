@@ -27,6 +27,7 @@ ALERT_KINDS = {
     "account_stale",
     "strategy_degraded",
     "entry_reached",
+    "news",
 }
 
 

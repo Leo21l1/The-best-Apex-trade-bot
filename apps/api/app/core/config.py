@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     copilot_timeout_seconds: float = Field(default=120, ge=5)
 
     # Economic calendar (Phase 5)
+    #: Official RSS sources polled for news (keys of app.services.news.SOURCES). Empty disables polling.
+    news_sources: list[str] = Field(default_factory=lambda: ["fed", "eia"])
+    news_poll_seconds: int = Field(default=300, ge=60, le=3600)
     calendar_pre_event_minutes: int = Field(default=15, ge=0, le=240)
     calendar_post_event_minutes: int = Field(default=15, ge=0, le=240)
     #: Official .ics calendar URLs fetched daily by the worker (e.g. the BLS release schedule).
