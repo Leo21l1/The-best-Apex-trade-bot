@@ -9,7 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import { formatEt } from "@/lib/format";
 import { money } from "@/lib/money";
 
-const STRATEGIES = ["orb", "vwap_trend", "sweep_reversal", "breakout_retest", "momentum_pullback", "vol_expansion", "mean_reversion", "mtf_trend", "discretionary"];
+const STRATEGIES = ["orb", "vwap_trend", "sweep_reversal", "breakout_retest", "momentum_pullback", "vol_expansion", "mean_reversion", "mtf_trend", "smc_sweep_mss", "smc_ob_retest", "smc_fvg_retest", "discretionary"];
 const input = "w-full rounded-md border border-line bg-panel-2 px-2.5 py-1.5 text-sm outline-none focus:border-accent";
 
 export function dailyPnl(trades: JournalTrade[]): { date: string; net: number; trades: number }[] {

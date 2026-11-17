@@ -14,7 +14,9 @@ $50K End-of-Day (EOD) Evaluation traded manually on Tradovate.
 |---|---|
 | Market data | Provider-independent adapters; every price labelled live / delayed / historical / simulated / unavailable with provider and timestamp; validation, duplicate protection, gap detection, freshness monitoring; candles on nine timeframes |
 | Market Radar | Trend, RSI, ATR and relative volume per timeframe; regime; VWAP; prior-day, overnight and opening-range levels; watchlist |
-| Strategies A–H | Opening range breakout, VWAP trend, liquidity sweep reversal, breakout-retest, momentum pullback, volatility expansion, mean reversion, multi-timeframe trend: written specifications and mathematically defined, explainable rules |
+| Strategies A–K | Opening range breakout, VWAP trend, liquidity sweep reversal, breakout-retest, momentum pullback, volatility expansion, mean reversion, multi-timeframe trend, plus SMC setups (sweep + structure shift, order-block retest, FVG retest): written specifications and mathematically defined, explainable rules |
+| Smart Money Analysis | Causal detectors for swings, BOS/CHoCH/MSS, equal highs/lows, liquidity sweeps (candidate / rejection / continuation / invalidated), order blocks, FVG and inverse FVG with fill tracking, supply/demand, breakout-retest, divergence; drawn on the chart with a pattern inspector, liquidity map, multi-timeframe confluence (BUY BIAS / SHORT BIAS / WAIT / NO TRADE) and an all-instrument setup scan |
+| News | Official Federal Reserve and EIA RSS feeds: publication vs detection time, rule-based impact (LOW–CRITICAL), dedupe, clustering, observed reaction, alerts, chart markers and a ticker. No breaking-news wire is connected (needs a licensed provider) |
 | Opportunities | Explainable candidates with entry zone, stop, targets, costs and itemised setup score; ranked only when the strategy is validated, data is real, rules are verified and the risk check passes (zero is a valid result) |
 | Apex Risk Guardian | Rule profile with per-rule verification records; EOD drawdown (not intraday trailing), daily loss, risk budget, contract exposure with micros; six-output trade checks |
 | Account data | Manual snapshots and CSV import of end-of-day balances (no broker connection) |
@@ -27,7 +29,7 @@ $50K End-of-Day (EOD) Evaluation traded manually on Tradovate.
 
 ## Status
 
-All seven phases are built and tested. See the reports in `docs/phase-reports/`.
+Phases 1–9 are built and tested on simulated data. See the reports in `docs/phase-reports/`.
 
 What still depends on you:
 
@@ -35,7 +37,14 @@ What still depends on you:
    help centre on **Apex Account Health → Rule profile** ([register](docs/compliance/apex-rules.md)).
 2. **Connect real market data.** Only the `simulated` provider has run. The Databento adapter needs
    an API key and a first live run ([status](docs/integrations/status.md)).
-3. **Add an Anthropic API key** for the copilot. It has only been tested against mocks.
+3. **Add an Anthropic API key** for the copilot. It has only been tested against mocks. Use
+   **Settings → Connection tests** (free: lists models, uses no tokens) to check it.
+4. **Allow network access** to `www.federalreserve.gov` and `www.eia.gov` for the news feeds
+   (`APEX_NEWS_SOURCES='[]'` disables polling).
+
+Pattern detectors can be checked against stored history with
+`cd apps/api && uv run python -m app.cli pattern-stats --symbol ES --timeframe 5m --days 60`;
+anything that has not shown out-of-sample value after costs is labelled RESEARCH ONLY.
 
 Until real data is connected no strategy can be validated, so the ranked opportunity list stays empty.
 

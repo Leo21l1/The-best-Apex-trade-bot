@@ -59,6 +59,32 @@ async def reset_db() -> int:
     return 0
 
 
+async def pattern_stats_cmd(symbol: str, timeframe: str, days: int, horizon: int) -> int:
+    import json
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.config import get_settings
+    from app.marketdata.instruments import INSTRUMENTS
+    from app.marketdata.types import Timeframe
+    from app.research.bars import aggregate, closed_only
+    from app.research.pattern_stats import pattern_stats
+    from app.research.scanner import load_bars
+
+    s = get_settings()
+    now = datetime.now(UTC)
+    tf = Timeframe(timeframe)
+    async with get_sessionmaker()() as session:
+        m1 = await load_bars(session, s.market_data_provider, symbol, now - timedelta(days=days), now)
+    bars = closed_only(aggregate(m1, tf), tf, now)
+    if len(bars) < 200:
+        print(f"Only {len(bars)} {timeframe} bars stored for {symbol} ({s.market_data_provider}); need >= 200.")
+        return 1
+    out = pattern_stats(symbol, timeframe, bars, float(INSTRUMENTS[symbol].tick_size), horizon=horizon)
+    out["provider"] = s.market_data_provider
+    print(json.dumps(out, indent=2, default=str))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="apex")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -71,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     rd = sub.add_parser("reset-db")
     rd.add_argument("--yes", action="store_true", required=True)
+    ps = sub.add_parser("pattern-stats", help="Historical validation of SMC pattern detectors on stored bars")
+    ps.add_argument("--symbol", default="ES")
+    ps.add_argument("--timeframe", default="5m")
+    ps.add_argument("--days", type=int, default=60)
+    ps.add_argument("--horizon", type=int, default=12)
     args = parser.parse_args(argv)
 
     async def run() -> int:
@@ -78,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "create-admin":
                 pw = sys.stdin.readline().rstrip("\n") if args.password_stdin else getpass.getpass()
                 return await create_admin(args.email, pw)
+            if args.cmd == "pattern-stats":
+                return await pattern_stats_cmd(args.symbol, args.timeframe, args.days, args.horizon)
             return await reset_db()
         finally:
             await dispose_engine()

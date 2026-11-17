@@ -43,6 +43,9 @@ test.describe.serial("account health and risk guardian", () => {
     const stats = page.getByTestId("account-stats");
     await expect(stats).toContainText("$49,200.00");
     await expect(page.getByTestId("drawdown-room")).toHaveText("$1,350.00");
+    // Gauges: EOD drawdown used = 1 - 1,350 / 2,000.
+    await expect(page.getByTestId("gauge-drawdown")).toContainText("$1,350.00 above threshold $49,200.00");
+    await expect(page.getByTestId("gauge-drawdown")).toHaveAttribute("aria-label", /EOD drawdown used: 3[23]%/);
     await expect(page.getByTestId("snapshot-table").locator("tbody tr")).toHaveCount(3);
   });
 

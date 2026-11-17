@@ -23,6 +23,8 @@ const apiEnv = {
   // Copilot talks to a scripted fake of the Anthropic API (scripts/fake_anthropic.py), never the real one.
   APEX_ANTHROPIC_API_KEY: "e2e-test-key",
   ANTHROPIC_BASE_URL: "http://127.0.0.1:8020",
+  // Deterministic runs: no polling of the live official news feeds.
+  APEX_NEWS_SOURCES: "[]",
 };
 
 export default defineConfig({

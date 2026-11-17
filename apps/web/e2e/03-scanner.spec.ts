@@ -51,14 +51,14 @@ test.describe("scanner, opportunities, strategies, alerts", () => {
     }
   });
 
-  test("strategy laboratory lists eight unvalidated specifications", async ({ page }) => {
+  test("strategy laboratory lists eleven unvalidated specifications", async ({ page }) => {
     await signIn(page);
     await page.goto("/strategies");
     await expect(page.getByText("No strategy is validated")).toBeVisible();
-    for (const id of ["orb", "vwap_trend", "sweep_reversal", "breakout_retest", "momentum_pullback", "vol_expansion", "mean_reversion", "mtf_trend"]) {
+    for (const id of ["orb", "vwap_trend", "sweep_reversal", "breakout_retest", "momentum_pullback", "vol_expansion", "mean_reversion", "mtf_trend", "smc_sweep_mss", "smc_ob_retest", "smc_fvg_retest"]) {
       await expect(page.getByTestId(`strategy-${id}`)).toBeVisible();
     }
-    await expect(page.getByText("Unvalidated", { exact: true })).toHaveCount(8);
+    await expect(page.getByText("Unvalidated", { exact: true })).toHaveCount(11);
   });
 
   test("alerts panel opens and can be cleared", async ({ page }) => {

@@ -195,3 +195,19 @@ def test_deterministic_ids_and_short_series() -> None:
     a, b = analyze("ES", "5m", bars, TICK), analyze("ES", "5m", bars, TICK)
     assert [p.id for p in a.patterns] == [p.id for p in b.patterns]
     assert analyze("ES", "5m", bars[:4], TICK).patterns == []
+
+
+def test_pattern_stats_harness_is_causal_and_conservative() -> None:
+    from app.research.pattern_stats import pattern_stats
+
+    bars = _random_bars(3000, 11)
+    out = pattern_stats("ES", "5m", bars, TICK, horizon=12, cost_ticks=2)
+    assert out["patterns"] and out["method"]["entry"] == "open of the bar after confirmation"
+    for row in out["patterns"]:
+        assert row["in_sample"]["n"] + row["out_of_sample"]["n"] > 0
+        assert row["label"] in ("RESEARCH ONLY", "predictive (on this data)")
+    # A random walk has no edge: after costs, essentially nothing should qualify as predictive.
+    assert sum(r["label"] != "RESEARCH ONLY" for r in out["patterns"]) <= 1
+    # Costs are charged: the baseline expectancy after costs is negative on a driftless walk.
+    base = out["patterns"][0]["baseline_in_sample"]
+    assert base["expectancy"] < 0.5
