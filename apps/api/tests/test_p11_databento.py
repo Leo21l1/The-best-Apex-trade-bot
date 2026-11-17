@@ -166,31 +166,62 @@ def px(v: float) -> int:
 
 
 class FakeLive:
+    """Mirrors databento.Live's lifecycle (v0.90): iterating STARTS the session (LiveIterator.__init__
+    calls Live.start); a second start raises; subscribe must precede start; a terminated client is dead."""
+
     def __init__(self, records: list[Any], hold: bool = False) -> None:
         self.records = records
         self.hold = hold
         self.subscriptions: list[dict[str, Any]] = []
+        self.start_calls = 0
         self.started = self.stopped = False
+        self.events: list[str] = []
 
     def subscribe(self, **kw: Any) -> int:
+        if self.started:
+            raise ValueError("cannot subscribe after the session has started")
+        if self.stopped:
+            raise ValueError("client is closed")
         self.subscriptions.append(kw)
+        self.events.append("subscribe")
         return 1
 
     def start(self) -> None:
+        self.start_calls += 1
+        if self.stopped:
+            raise ValueError("cannot start a live client after it is closed")
+        if not self.subscriptions:
+            raise ValueError("must call subscribe() before starting live client")
+        if self.started:
+            raise RuntimeError("Session can only be started once")
         self.started = True
+        self.events.append("start")
 
     def stop(self) -> None:
         self.stopped = True
+        self.events.append("stop")
 
-    def __aiter__(self) -> FakeLive:
-        self._it = iter(self.records)
-        return self
+    def terminate(self) -> None:
+        self.stopped = True
+        self.events.append("terminate")
+
+    def __aiter__(self) -> FakeLiveIterator:
+        return FakeLiveIterator(self)  # like databento's Live.__aiter__ -> LiveIterator(client)
+
+
+class FakeLiveIterator:
+    """Like databento's LiveIterator: starts the client on creation, has __anext__ but no __aiter__."""
+
+    def __init__(self, client: FakeLive) -> None:
+        client.start()
+        self.client = client
+        self._it = iter(client.records)
 
     async def __anext__(self) -> Any:
         try:
             return next(self._it)
         except StopIteration:
-            if self.hold:
+            if self.client.hold:
                 await asyncio.sleep(3600)
             raise StopAsyncIteration from None
 
@@ -348,3 +379,181 @@ async def test_live_disconnect_reconnects_with_backoff_and_resumes() -> None:
         stop.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+# --- session lifecycle regression tests ("Session can only be started once") -----------------
+
+
+def test_installed_databento_iterator_starts_the_session_itself() -> None:
+    """Guards the assumptions the adapter relies on: creating the iterator starts the session, and
+    the iterator has __anext__ but no __aiter__ (so it must be driven directly)."""
+    import inspect
+
+    from databento.live.client import Live, LiveIterator
+
+    assert "client.start()" in inspect.getsource(LiveIterator.__init__)
+    assert hasattr(LiveIterator, "__anext__") and not hasattr(LiveIterator, "__aiter__")
+    assert "iter(self)" in inspect.getsource(Live.__aiter__)
+
+
+async def test_session_is_subscribed_then_started_exactly_once_and_terminated() -> None:
+    fake = FakeLive(live_records())
+    p, _ = provider(lambda r: httpx.Response(200), live=lambda key: fake)
+    out = []
+    with pytest.raises(ProviderError, match="live session ended"):
+        async for c in p.stream_candles(["ES", "NQ"], since=NOW - timedelta(minutes=5)):
+            out.append(c)
+    assert len(out) == 3
+    assert fake.start_calls == 1 and fake.events == ["subscribe", "start", "terminate"]
+
+
+async def test_consumer_closing_early_terminates_the_session() -> None:
+    import contextlib
+
+    fake = FakeLive(live_records(), hold=True)
+    p, _ = provider(lambda r: httpx.Response(200), live=lambda key: fake)
+    async with contextlib.aclosing(p.stream_candles(["ES", "NQ"])) as gen:
+        first = await gen.__anext__()
+    assert first.symbol == "ES" and fake.events == ["subscribe", "start", "terminate"]
+
+
+async def test_timeout_cancellation_terminates_the_session_like_the_diagnostic() -> None:
+    import contextlib
+
+    fake = FakeLive(live_records(), hold=True)
+    p, _ = provider(lambda r: httpx.Response(200), live=lambda key: fake)
+
+    async def run() -> None:
+        async with contextlib.aclosing(p.stream_candles(["ES", "NQ"])) as gen:
+            async for _ in gen:
+                pass
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(run(), 0.2)
+    assert fake.events[-1] == "terminate" and fake.start_calls == 1
+
+
+async def test_each_reconnect_uses_a_new_session_and_replays_from_the_last_bar() -> None:
+    sessions: list[FakeLive] = []
+
+    def factory(key: str) -> FakeLive:
+        f = FakeLive(live_records() if not sessions else live_records()[:2], hold=bool(sessions))
+        sessions.append(f)
+        return f
+
+    p, _ = provider(lambda r: httpx.Response(200, text=""), live=factory)
+    svc = ingest(p)
+    stop = asyncio.Event()
+    task = asyncio.create_task(svc.run(stop))
+    for _ in range(300):
+        if len(sessions) >= 2 and sessions[1].started:
+            break
+        await asyncio.sleep(0.01)
+    try:
+        assert len(sessions) >= 2 and len({id(x) for x in sessions}) == len(sessions)
+        assert all(x.start_calls == 1 for x in sessions)  # no session is ever started twice
+        assert sessions[0].events[-1] == "terminate"
+        # The reconnect replays from just after the OLDEST per-symbol last bar (NQ's, at t1), so no
+        # symbol has a gap.
+        nq_last = NOW.replace(second=0) - timedelta(minutes=2)
+        assert sessions[1].subscriptions[0]["start"] == nq_last + timedelta(minutes=1)
+        assert svc.status["reconnects"] >= 1 and "Session can only be started once" not in svc.status["last_error"]
+    finally:
+        stop.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+class _StubQueue:
+    def __init__(self, records: list[Any]) -> None:
+        self.records = list(records)
+        self.enabled = False
+
+    def enable(self) -> None:
+        self.enabled = True
+
+    def disable(self) -> None:
+        self.enabled = False
+
+    def is_enabled(self) -> bool:
+        return self.enabled
+
+    def is_full(self) -> bool:
+        return False
+
+    def qsize(self) -> int:
+        return len(self.records)
+
+    def get_nowait(self) -> Any:
+        import queue
+
+        if not self.records:
+            raise queue.Empty
+        return self.records.pop(0)
+
+    async def wait_for_record(self, timeout: float) -> None:  # noqa: ASYNC109 - mirrors databento API
+        await asyncio.sleep(0)
+
+
+class _StubSession:
+    """Stands in for databento's network session underneath the REAL Live / LiveIterator classes."""
+
+    def __init__(self, records: list[Any]) -> None:
+        self._dbn_queue = _StubQueue(records)
+        self.dataset = ""
+        self.subscriptions: list[dict[str, Any]] = []
+        self.start_calls = 0
+        self.streaming = self.terminated = False
+
+    def subscribe(self, **kw: Any) -> int:
+        self.dataset = kw["dataset"]
+        self.subscriptions.append(kw)
+        return 1
+
+    def is_streaming(self) -> bool:
+        return self.streaming
+
+    def is_disconnected(self) -> bool:
+        return self.terminated or (self.streaming and not self._dbn_queue.records)
+
+    def is_reading(self) -> bool:
+        return True
+
+    def resume_reading(self) -> None:
+        return None
+
+    def start(self) -> None:
+        self.start_calls += 1
+        if self.streaming:
+            raise RuntimeError("Session can only be started once")
+        self.streaming = True
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    async def wait_for_close(self) -> None:
+        return None
+
+
+async def test_real_databento_live_client_lifecycle_starts_once() -> None:
+    """Runs the adapter through the real databento.Live + LiveIterator code (network stubbed)."""
+    import databento as db
+
+    stubs: list[_StubSession] = []
+
+    def factory(key: str) -> Any:
+        client = db.Live(key=key)
+        stub = _StubSession(live_records())
+        client._session = stub  # replace only the network layer
+        stubs.append(stub)
+        return client
+
+    p, _ = provider(lambda r: httpx.Response(200), live=factory)
+    out = []
+    with pytest.raises(ProviderError, match="live session ended"):
+        async for c in p.stream_candles(["ES", "NQ"], since=NOW - timedelta(minutes=5)):
+            out.append(c)
+    stub = stubs[0]
+    assert stub.start_calls == 1 and stub.terminated
+    assert stub.subscriptions[0]["dataset"] == "GLBX.MDP3" and stub.subscriptions[0]["symbols"] == ["ES.v.0", "NQ.v.0"]
+    assert [(c.symbol, str(c.close)) for c in out] == [("ES", "5000.5"), ("NQ", "21003"), ("ES", "5001.75")]

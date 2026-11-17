@@ -239,7 +239,11 @@ class DatabentoProvider(MarketDataProvider):
         return []
 
     async def stream_candles(self, symbols: Sequence[str], since: datetime | None = None) -> AsyncIterator[Candle]:
-        """Live ``ohlcv-1m`` bars via the Databento Live API, replaying from ``since`` (max 23h back)."""
+        """Live ``ohlcv-1m`` bars via the Databento Live API, replaying from ``since`` (max 23h back).
+
+        Each call creates its own ``Live`` client: subscribe first, then iterate once (which starts
+        the session). The session is terminated when the generator finishes or is closed.
+        """
         now = self._clock()
         start = max(since or now - timedelta(minutes=30), now - REPLAY_WINDOW)
         try:
@@ -251,13 +255,23 @@ class DatabentoProvider(MarketDataProvider):
                 symbols=[self.continuous(s) for s in symbols],
                 start=start,
             )
-            client.start()
+            # Lifecycle (databento >= 0.4x): creating the iterator starts the session
+            # (LiveIterator.__init__ calls Live.start), so start() must NOT also be called here.
+            # Calling both raised "Session can only be started once". One client = one session:
+            # reconnects always build a new client through the factory, never restart this one.
+            records = client.__aiter__()
         except Exception as exc:  # databento raises BentoError subclasses; classify by message
             raise _classify(exc) from exc
         roots = {self.continuous(s): s for s in symbols}
         by_id: dict[int, str] = {}
         try:
-            async for rec in client:
+            while True:
+                # Drive the LiveIterator directly: it only implements __anext__ (an `async for` over
+                # it would call __aiter__ again), and the session was started when it was created.
+                try:
+                    rec = await records.__anext__()
+                except StopAsyncIteration:
+                    break
                 if hasattr(rec, "stype_in_symbol"):  # SymbolMappingMsg: instrument_id -> our root
                     root = roots.get(str(rec.stype_in_symbol))
                     if root:
@@ -289,7 +303,7 @@ class DatabentoProvider(MarketDataProvider):
             raise _classify(exc) from exc
         finally:
             try:
-                client.stop()
+                client.terminate()  # close this session for good (also when the consumer stops early)
             except Exception as exc:  # session may already be closed
                 log_event(log, "databento live stop", level=logging.DEBUG, error=type(exc).__name__)
         raise ProviderError("Databento live session ended")

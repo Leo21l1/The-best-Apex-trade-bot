@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import getpass
 import sys
 from typing import Any
@@ -132,15 +133,18 @@ async def _databento_check(key: str, s: Any, live_seconds: int) -> int:
         try:
 
             async def run() -> None:
-                async for bar in p.stream_candles(["ES", "NQ"], since=now - timedelta(minutes=5)):
-                    lag = (datetime.now(UTC) - bar.ts).total_seconds() / 60
-                    print(
-                        f"    {bar.symbol} {bar.ts:%Y-%m-%d %H:%M} UTC close {bar.close} vol {bar.volume} "
-                        f"({bar.quality.value}, bar opened {lag:.1f} min ago)"
-                    )
-                    got[bar.symbol] = bar.ts
-                    if len(got) == 2 and all(datetime.now(UTC) - t < timedelta(minutes=3) for t in got.values()):
-                        return
+                # aclosing: when the time limit cancels us, the generator's finally block terminates
+                # this diagnostic's own Live session (it is separate from the worker's session).
+                async with contextlib.aclosing(p.stream_candles(["ES", "NQ"], since=now - timedelta(minutes=5))) as gen:
+                    async for bar in gen:
+                        lag = (datetime.now(UTC) - bar.ts).total_seconds() / 60
+                        print(
+                            f"    {bar.symbol} {bar.ts:%Y-%m-%d %H:%M} UTC close {bar.close} vol {bar.volume} "
+                            f"({bar.quality.value}, bar opened {lag:.1f} min ago)"
+                        )
+                        got[bar.symbol] = bar.ts
+                        if len(got) == 2 and all(datetime.now(UTC) - t < timedelta(minutes=3) for t in got.values()):
+                            return
 
             await asyncio.wait_for(run(), live_seconds)
         except TimeoutError:
