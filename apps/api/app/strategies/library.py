@@ -252,8 +252,7 @@ class MomentumPullback(Strategy):
         timeframe="5m",
         required_data="At least 60 closed 5-minute bars.",
         eligible_instruments=ALL_SYMBOLS,
-        regime="Momentum: EMA20 beyond EMA50 and RSI(14) reached >= 60 (long) / <= 40 (short) "
-        "within the last 12 bars.",
+        regime="Momentum: EMA20 beyond EMA50 and RSI(14) reached >= 60 (long) / <= 40 (short) within the last 12 bars.",
         entry="At least 2 of the previous 3 bars closed against the trend, and the current bar "
         "tags EMA20 and closes beyond it with a with-trend body.",
         invalidation="A 5m close beyond EMA50 against the trend.",
@@ -296,10 +295,8 @@ class VolatilityExpansion(Strategy):
         timeframe="5m",
         required_data="At least 120 closed 5-minute bars (Bollinger width history).",
         eligible_instruments=ALL_SYMBOLS,
-        regime="Squeeze: Bollinger(20, 2) width in bars t-6..t-1 touched the lowest 20% of its "
-        "last 100 values.",
-        entry="Current bar range >= 1.5 ATR and close outside the Bollinger band; trade in the "
-        "direction of the close.",
+        regime="Squeeze: Bollinger(20, 2) width in bars t-6..t-1 touched the lowest 20% of its last 100 values.",
+        entry="Current bar range >= 1.5 ATR and close outside the Bollinger band; trade in the direction of the close.",
         invalidation="A 5m close back inside the band beyond the middle band.",
         stop="Bollinger middle band (SMA20).",
         targets="1.5R and 2.5R.",

@@ -132,6 +132,11 @@ export function RiskGuardian() {
               {c.violations.length > 0 && (
                 <ul className="mt-4 space-y-1 text-sm text-down">{c.violations.map((v) => <li key={v}>✗ {v}</li>)}</ul>
               )}
+              {result.news.status !== "clear" && (
+                <p className={cx("mt-3 text-sm", result.news.status === "inside_window" ? "text-warn" : "text-muted")} data-testid="risk-news">
+                  News: {result.news.summary}
+                </p>
+              )}
               {c.warnings.length > 0 && (
                 <ul className="mt-3 space-y-1 text-sm text-warn">{c.warnings.map((w) => <li key={w}>! {w}</li>)}</ul>
               )}

@@ -23,9 +23,7 @@ def round_trip_cost(ctx: MarketContext, settings: Settings) -> float:
     """Assumed cost in dollars to enter and exit one contract."""
     inst = ctx.instrument
     commission = (
-        settings.cost_commission_per_side_micro
-        if inst.is_micro
-        else settings.cost_commission_per_side_standard
+        settings.cost_commission_per_side_micro if inst.is_micro else settings.cost_commission_per_side_standard
     )
     slippage = settings.cost_slippage_ticks_per_side * float(inst.tick_value)
     return round(2 * (commission + slippage), 2)

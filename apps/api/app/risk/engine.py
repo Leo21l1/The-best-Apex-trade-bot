@@ -220,14 +220,10 @@ class CostModel:
 
     def round_trip(self, inst: Instrument) -> Decimal:
         """Assumed cost to open and close ONE contract."""
-        return (2 * (self.commission_per_side + self.slippage_ticks_per_side * inst.tick_value)).quantize(
-            CENT
-        )
+        return (2 * (self.commission_per_side + self.slippage_ticks_per_side * inst.tick_value)).quantize(CENT)
 
 
-def loss_per_contract(
-    inst: Instrument, entry: Decimal, stop: Decimal, costs: CostModel
-) -> tuple[Decimal, Decimal]:
+def loss_per_contract(inst: Instrument, entry: Decimal, stop: Decimal, costs: CostModel) -> tuple[Decimal, Decimal]:
     """(price risk in dollars, loss after assumed costs) for one contract stopped out."""
     price_risk = inst.dollars_between(entry, stop).quantize(CENT)
     return price_risk, price_risk + costs.round_trip(inst)
@@ -340,20 +336,16 @@ def check_trade(
         if state.target_reached:
             warnings.append("Profit target already reached on the entered balance; new risk is unnecessary.")
         if state.drawdown_room is not None and loss >= state.drawdown_room > ZERO:
-            violations.append(
-                f"Loss at stop ${loss} would reach the drawdown threshold (room ${state.drawdown_room})."
-            )
+            violations.append(f"Loss at stop ${loss} would reach the drawdown threshold (room ${state.drawdown_room}).")
         if state.daily_loss_remaining is not None and loss > state.daily_loss_remaining > ZERO:
             violations.append(
-                f"Loss at stop ${loss} exceeds the remaining daily loss allowance "
-                f"${state.daily_loss_remaining}."
+                f"Loss at stop ${loss} exceeds the remaining daily loss allowance ${state.daily_loss_remaining}."
             )
         if state.risk_budget > ZERO:
             used = (loss / state.risk_budget * 100).quantize(Decimal("0.1"))
             if loss > state.risk_budget * max_trade_fraction and not violations:
                 warnings.append(
-                    f"Trade uses {used}% of the remaining risk budget "
-                    f"(advisory cap {max_trade_fraction * 100:.0f}%)."
+                    f"Trade uses {used}% of the remaining risk budget (advisory cap {max_trade_fraction * 100:.0f}%)."
                 )
     else:
         warnings.append("Account state unknown: size limits by risk cannot be computed.")

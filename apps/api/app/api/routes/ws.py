@@ -122,9 +122,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             elif kind in ("subscribe", "unsubscribe"):
                 topics = msg.get("topics")
                 valid = (
-                    {t for t in topics if isinstance(t, str) and _valid_topic(t)}
-                    if isinstance(topics, list)
-                    else set()
+                    {t for t in topics if isinstance(t, str) and _valid_topic(t)} if isinstance(topics, list) else set()
                 )
                 if kind == "subscribe":
                     subscribed.update(valid)

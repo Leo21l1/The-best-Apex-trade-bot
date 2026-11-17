@@ -172,9 +172,7 @@ async def test_python_aggregation_matches_sql_for_every_timeframe() -> None:
     async with get_sessionmaker()() as s:
         await upsert_candles(s, candles)
         await s.commit()
-        bars = [
-            Bar(c.ts, float(c.open), float(c.high), float(c.low), float(c.close), c.volume) for c in candles
-        ]
+        bars = [Bar(c.ts, float(c.open), float(c.high), float(c.low), float(c.close), c.volume) for c in candles]
         for tf in Timeframe:
             sql = await query_bars(s, provider="simulated", symbol="NQ", timeframe=tf, limit=2000)
             py = aggregate(bars, tf)[-2000:]
@@ -312,9 +310,7 @@ def test_liquidity_sweep_triggers_on_crafted_tape() -> None:
     # Overnight low on this tape is 4997.5. Sweep it and close back above with a long lower wick.
     start = utc(2026, 11, 11, 14, 50)
     sweep = [Bar(start + timedelta(minutes=i), 5000, 5001, 4994, 5000.5, 1500) for i in range(5)]
-    ev = STRATEGY_BY_ID["sweep_reversal"].evaluate(
-        MarketContext("ES", start + timedelta(minutes=5), bars + sweep)
-    )
+    ev = STRATEGY_BY_ID["sweep_reversal"].evaluate(MarketContext("ES", start + timedelta(minutes=5), bars + sweep))
     assert ev.signal is not None, [(c.name, c.passed, c.detail) for c in ev.conditions]
     assert ev.signal.direction == "long" and ev.signal.stop < 4994 and ev.signal.entry == 5000.5
 

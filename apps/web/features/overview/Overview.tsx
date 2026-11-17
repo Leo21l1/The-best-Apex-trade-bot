@@ -10,6 +10,7 @@ import { formatPrice } from "@/lib/candles";
 import { formatEt, humanizeComponent } from "@/lib/format";
 import { COMPLETED_PHASE, NAV } from "@/lib/nav";
 import { money } from "@/lib/money";
+import { Briefing } from "./Briefing";
 import { TRADER_PROFILE } from "@/lib/profile";
 
 const TICKS: Record<string, number> = { ES: 0.25, NQ: 0.25, YM: 1, RTY: 0.1, CL: 0.01, GC: 0.1 };
@@ -39,6 +40,7 @@ export function Overview() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <Briefing />
         <Panel
           title="Market data"
           className="lg:col-span-2"

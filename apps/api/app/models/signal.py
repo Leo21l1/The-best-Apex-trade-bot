@@ -43,9 +43,7 @@ class AlertRow(Base):
     __tablename__ = "alerts"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), index=True
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     kind: Mapped[str] = mapped_column(String(32), index=True)
     severity: Mapped[str] = mapped_column(String(8))  # info | warning | critical
     title: Mapped[str] = mapped_column(String(200))

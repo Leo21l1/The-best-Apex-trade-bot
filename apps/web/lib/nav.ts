@@ -41,7 +41,7 @@ export const NAV: NavItem[] = [
 ];
 
 /** Pages whose phase is at or below this are implemented. */
-export const COMPLETED_PHASE = 4;
+export const COMPLETED_PHASE = 5;
 
 export const NAV_GROUPS = ["Markets", "Account", "Research", "System"] as const;
 

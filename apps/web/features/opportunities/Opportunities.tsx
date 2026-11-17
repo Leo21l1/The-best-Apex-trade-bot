@@ -157,10 +157,16 @@ function Explain({ o }: { o: Opportunity }) {
         <ul className="list-disc space-y-0.5 pl-4 text-muted">
           {o.rank_blockers.map((b) => <li key={b}>{b}</li>)}
         </ul>
+        <a
+          className="mt-2 inline-block text-accent hover:underline"
+          href={`/copilot?q=${encodeURIComponent(`Explain research candidate #${o.id}: ${o.symbol} ${o.direction} ${o.strategy_id}. Why did it trigger, what invalidates it, and what is the risk for 1 contract?`)}`}
+        >
+          Ask the copilot to explain this setup →
+        </a>
         <p className="mt-2 mb-1 font-medium text-muted uppercase">Uncertainty</p>
         <ul className="list-disc space-y-0.5 pl-4 text-muted">
           {o.uncertainty.map((u) => <li key={u}>{u}</li>)}
-          <li>News exposure: {o.news_exposure}</li>
+          <li className={o.news?.status === "inside_window" ? "text-warn" : undefined}>News: {o.news?.summary ?? o.news_exposure}</li>
           <li>Risk check (1 contract): {o.risk ? `${o.risk.verdict.replaceAll("_", " ")}; max size ${o.risk.max_size ?? "unknown"}` : o.risk_eligibility}</li>
         </ul>
       </div>

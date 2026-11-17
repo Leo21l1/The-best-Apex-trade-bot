@@ -55,9 +55,7 @@ async def bootstrap_status(session: SessionDep) -> BootstrapStatus:
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(auth_rate_limit)],
 )
-async def bootstrap(
-    body: BootstrapRequest, request: Request, response: Response, session: SessionDep
-) -> SessionOut:
+async def bootstrap(body: BootstrapRequest, request: Request, response: Response, session: SessionDep) -> SessionOut:
     """Create the first administrator. Disabled permanently once any user exists."""
     s = get_settings()
     if await _user_count(session) > 0:
@@ -76,9 +74,7 @@ async def bootstrap(
     )
     session.add(user)
     await session.flush()
-    await record_audit(
-        session, action="auth.bootstrap", outcome="success", actor_id=user.id, ip=client_ip(request)
-    )
+    await record_audit(session, action="auth.bootstrap", outcome="success", actor_id=user.id, ip=client_ip(request))
     await session.commit()
     token, expires = create_access_token(str(user.id), user.token_version)
     _set_session_cookie(response, token, expires)
@@ -145,9 +141,7 @@ async def login(body: Credentials, request: Request, response: Response, session
 async def logout(user: CurrentUser, request: Request, response: Response, session: SessionDep) -> Response:
     # Revoke every outstanding token for this user.
     user.token_version += 1
-    await record_audit(
-        session, action="auth.logout", outcome="success", actor_id=user.id, ip=client_ip(request)
-    )
+    await record_audit(session, action="auth.logout", outcome="success", actor_id=user.id, ip=client_ip(request))
     await session.commit()
     response.status_code = status.HTTP_204_NO_CONTENT
     response.delete_cookie(get_settings().cookie_name, path="/")

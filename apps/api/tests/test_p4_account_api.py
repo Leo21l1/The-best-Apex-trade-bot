@@ -87,9 +87,7 @@ async def test_changing_a_value_clears_its_verification_and_is_audited(
         assert (
             await admin_client.put("/api/rules/daily_loss_limit", json={"value": bad}, headers=CSRF)
         ).status_code == 422, bad
-    assert (
-        await admin_client.put("/api/rules/max_contracts", json={"value": "6.5"}, headers=CSRF)
-    ).status_code == 422
+    assert (await admin_client.put("/api/rules/max_contracts", json={"value": "6.5"}, headers=CSRF)).status_code == 422
     # Optional rule may be blank.
     assert (
         await admin_client.put("/api/rules/drawdown_stop_level", json={"value": ""}, headers=CSRF)
@@ -124,13 +122,9 @@ async def test_viewers_cannot_change_rules_or_delete_snapshots(admin_client: htt
     snap = await post(admin_client, "/api/account/snapshots", {"balance": "50000"})
     sid = snap.json()["id"]
     admin_client.cookies.clear()
-    await admin_client.post(
-        "/api/auth/login", json={"email": "viewer@example.com", "password": "Viewer-Pass-42!"}
-    )
+    await admin_client.post("/api/auth/login", json={"email": "viewer@example.com", "password": "Viewer-Pass-42!"})
     assert (await admin_client.get("/api/rules")).status_code == 200
-    assert (
-        await admin_client.put("/api/rules/max_drawdown", json={"value": "1"}, headers=CSRF)
-    ).status_code == 403
+    assert (await admin_client.put("/api/rules/max_drawdown", json={"value": "1"}, headers=CSRF)).status_code == 403
     assert (await post(admin_client, "/api/rules/max_drawdown/verify", VERIFY)).status_code == 403
     assert (await admin_client.delete(f"/api/account/snapshots/{sid}", headers=CSRF)).status_code == 403
 

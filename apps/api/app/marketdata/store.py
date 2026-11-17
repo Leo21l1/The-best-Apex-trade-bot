@@ -121,9 +121,7 @@ async def query_bars(
         LIMIT :limit
         """  # noqa: S608
     )
-    res = await session.execute(
-        sql, {"provider": provider, "symbol": symbol, "before": before, "limit": limit}
-    )
+    res = await session.execute(sql, {"provider": provider, "symbol": symbol, "before": before, "limit": limit})
     bars = [
         Bar(
             ts=r.bucket,

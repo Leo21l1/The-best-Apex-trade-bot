@@ -42,9 +42,7 @@ class Instrument:
         return self.ticks_between(a, b) * self.tick_value * contracts
 
 
-def _i(
-    symbol: str, name: str, exch: str, cls: str, tick: str, value: str, micro: bool, sib: str
-) -> Instrument:
+def _i(symbol: str, name: str, exch: str, cls: str, tick: str, value: str, micro: bool, sib: str) -> Instrument:
     return Instrument(symbol, name, exch, cls, Decimal(tick), Decimal(value), micro, sib)
 
 

@@ -22,9 +22,7 @@ async def test_bootstrap_status_then_first_admin(client: httpx.AsyncClient) -> N
 
 
 async def test_bootstrap_only_once(admin_client: httpx.AsyncClient) -> None:
-    r = await admin_client.post(
-        "/api/auth/bootstrap", json={"email": "other@example.com", "password": STRONG_PASSWORD}
-    )
+    r = await admin_client.post("/api/auth/bootstrap", json={"email": "other@example.com", "password": STRONG_PASSWORD})
     assert r.status_code == 409
 
 
@@ -49,9 +47,7 @@ async def test_bootstrap_token_enforced_when_configured(client: httpx.AsyncClien
 async def test_login_me_logout_revokes_token(admin_client: httpx.AsyncClient) -> None:
     admin_client.cookies.clear()
     assert (await admin_client.get("/api/auth/me")).status_code == 401
-    r = await admin_client.post(
-        "/api/auth/login", json={"email": ADMIN_EMAIL.upper(), "password": STRONG_PASSWORD}
-    )
+    r = await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL.upper(), "password": STRONG_PASSWORD})
     assert r.status_code == 200
     old_cookie = admin_client.cookies.get(get_settings().cookie_name)
     assert (await admin_client.get("/api/auth/me")).json()["email"] == ADMIN_EMAIL
@@ -69,18 +65,14 @@ async def test_bad_password_and_unknown_user_same_response(
     admin_client: httpx.AsyncClient,
 ) -> None:
     a = await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"})
-    b = await admin_client.post(
-        "/api/auth/login", json={"email": "nobody@example.com", "password": "wrong-password"}
-    )
+    b = await admin_client.post("/api/auth/login", json={"email": "nobody@example.com", "password": "wrong-password"})
     assert a.status_code == b.status_code == 401
     assert a.json() == b.json()
 
 
 async def test_lockout_after_repeated_failures(admin_client: httpx.AsyncClient) -> None:
     for _ in range(get_settings().login_max_failures):
-        r = await admin_client.post(
-            "/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"}
-        )
+        r = await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"})
         assert r.status_code == 401
     r = await admin_client.post("/api/auth/login", json={"email": ADMIN_EMAIL, "password": STRONG_PASSWORD})
     assert r.status_code == 423
@@ -89,9 +81,7 @@ async def test_lockout_after_repeated_failures(admin_client: httpx.AsyncClient) 
 async def test_auth_rate_limit(client: httpx.AsyncClient) -> None:
     get_settings().auth_rate_limit_per_minute = 3
     codes = [
-        (
-            await client.post("/api/auth/login", json={"email": "x@example.com", "password": "nope"})
-        ).status_code
+        (await client.post("/api/auth/login", json={"email": "x@example.com", "password": "nope"})).status_code
         for _ in range(5)
     ]
     assert codes[:3] == [401, 401, 401]

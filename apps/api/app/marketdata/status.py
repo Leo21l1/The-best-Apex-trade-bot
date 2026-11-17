@@ -56,8 +56,7 @@ async def market_data_component() -> ComponentStatus:
         return ComponentStatus(
             name="market_data",
             state=ComponentState.DOWN,
-            detail=f"Provider '{s.market_data_provider}' configured but the ingestion worker "
-            "is not reporting.",
+            detail=f"Provider '{s.market_data_provider}' configured but the ingestion worker is not reporting.",
             checked_at=now,
         )
     label = f"{doc['provider']} ({str(doc['quality']).upper()})"

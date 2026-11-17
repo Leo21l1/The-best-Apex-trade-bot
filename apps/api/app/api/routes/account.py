@@ -35,6 +35,7 @@ from app.services.account import (
     parse_balance_csv,
 )
 from app.services.audit import record_audit
+from app.services.calendar import news_exposure
 
 router = APIRouter(tags=["account"])
 
@@ -69,9 +70,7 @@ def _rules_out(rows: list[RuleRow]) -> RulesOut:
         rules=[RuleOut.model_validate(r) for r in rows],
         warning=None
         if rs.verified
-        else (
-            f"{len(rs.unverified_rules)} required rule(s) unverified. No trade will be labelled compliant."
-        ),
+        else (f"{len(rs.unverified_rules)} required rule(s) unverified. No trade will be labelled compliant."),
     )
 
 
@@ -94,9 +93,7 @@ async def _rule(session: SessionDep, key: str) -> RuleRow:
 
 
 @router.put("/rules/{key}", response_model=RulesOut)
-async def update_rule(
-    key: str, body: RuleUpdateIn, user: AdminUser, request: Request, session: SessionDep
-) -> RulesOut:
+async def update_rule(key: str, body: RuleUpdateIn, user: AdminUser, request: Request, session: SessionDep) -> RulesOut:
     """Change a rule value. Any change clears the rule's verification record."""
     row = await _rule(session, key)
     try:
@@ -123,9 +120,7 @@ async def update_rule(
 
 
 @router.post("/rules/{key}/verify", response_model=RulesOut)
-async def verify_rule(
-    key: str, body: RuleVerifyIn, user: AdminUser, request: Request, session: SessionDep
-) -> RulesOut:
+async def verify_rule(key: str, body: RuleVerifyIn, user: AdminUser, request: Request, session: SessionDep) -> RulesOut:
     """Record that the current value was checked against an official source."""
     row = await _rule(session, key)
     host = (urlparse(body.source_url).hostname or "").lower()
@@ -193,18 +188,14 @@ async def list_snapshots(
 ) -> list[SnapshotOut]:
     rows = (
         await session.scalars(
-            select(AccountSnapshot)
-            .order_by(AccountSnapshot.as_of.desc(), AccountSnapshot.id.desc())
-            .limit(limit)
+            select(AccountSnapshot).order_by(AccountSnapshot.as_of.desc(), AccountSnapshot.id.desc()).limit(limit)
         )
     ).all()
     return [SnapshotOut.model_validate(r) for r in rows]
 
 
 @router.post("/account/snapshots", response_model=SnapshotOut, status_code=status.HTTP_201_CREATED)
-async def create_snapshot(
-    body: SnapshotIn, user: CurrentUser, request: Request, session: SessionDep
-) -> SnapshotOut:
+async def create_snapshot(body: SnapshotIn, user: CurrentUser, request: Request, session: SessionDep) -> SnapshotOut:
     now = datetime.now(UTC)
     as_of = body.as_of.astimezone(UTC) if body.as_of else now
     if (as_of - now).total_seconds() > 120:
@@ -249,9 +240,7 @@ async def create_snapshot(
 
 
 @router.delete("/account/snapshots/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_snapshot(
-    snapshot_id: int, user: AdminUser, request: Request, session: SessionDep
-) -> Response:
+async def delete_snapshot(snapshot_id: int, user: AdminUser, request: Request, session: SessionDep) -> Response:
     row = await session.get(AccountSnapshot, snapshot_id)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Snapshot not found")
@@ -269,9 +258,7 @@ async def delete_snapshot(
 
 
 @router.post("/account/import-csv", response_model=CsvImportOut)
-async def import_csv(
-    body: CsvImportIn, user: CurrentUser, request: Request, session: SessionDep
-) -> CsvImportOut:
+async def import_csv(body: CsvImportIn, user: CurrentUser, request: Request, session: SessionDep) -> CsvImportOut:
     """Import end-of-day balances. Use ``dry_run`` to preview. Nothing is imported if any row fails."""
     res = parse_balance_csv(body.csv)
     imported = 0
@@ -329,8 +316,13 @@ async def risk_check(body: TradeCheckIn, _: CurrentUser, session: SessionDep) ->
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    s = get_settings()
+    news = await news_exposure(
+        session, inst.symbol, datetime.now(UTC), s.calendar_pre_event_minutes, s.calendar_post_event_minutes
+    )
     return {
         "check": _jsonable(asdict(result)),
+        "news": news,
         "instrument": {
             "symbol": inst.symbol,
             "tick_size": float(inst.tick_size),

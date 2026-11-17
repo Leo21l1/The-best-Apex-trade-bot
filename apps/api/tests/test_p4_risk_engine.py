@@ -152,11 +152,7 @@ def test_staleness_rules() -> None:
 
 
 def test_unverified_rules_are_warned() -> None:
-    s = state(
-        rules=RuleSet(
-            "apex", D(50000), D(3000), D(2000), D(1000), D(6), unverified_rules=("Daily loss limit",)
-        )
-    )
+    s = state(rules=RuleSet("apex", D(50000), D(3000), D(2000), D(1000), D(6), unverified_rules=("Daily loss limit",)))
     assert any("UNVERIFIED" in w and "Daily loss limit" in w for w in s.warnings)
     assert not any("UNVERIFIED" in w for w in state(rules=VERIFIED).warnings)
 
@@ -285,9 +281,7 @@ def test_short_trade_arithmetic() -> None:
         ("sideways", "5000", "4996", None, "direction"),
     ],
 )
-def test_invalid_trade_inputs(
-    direction: str, entry: str, stop: str, target: str | None, message: str
-) -> None:
+def test_invalid_trade_inputs(direction: str, entry: str, stop: str, target: str | None, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         chk(state(), direction=direction, entry=entry, stop=stop, target=target)
     with pytest.raises(ValueError, match="quantity"):

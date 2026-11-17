@@ -28,9 +28,7 @@ async def _seed(symbols: tuple[str, ...] = ("ES", "NQ"), hours: int = 80) -> Ing
     s = get_settings()
     s.market_data_provider = "simulated"
     s.market_data_symbols = list(symbols)
-    svc = IngestionService(
-        SimulatedProvider(), symbols, get_sessionmaker(), get_redis(), backfill_hours=hours
-    )
+    svc = IngestionService(SimulatedProvider(), symbols, get_sessionmaker(), get_redis(), backfill_hours=hours)
     await svc.backfill()
     await svc._set_state("streaming")
     return svc

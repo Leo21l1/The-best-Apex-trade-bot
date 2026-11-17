@@ -23,6 +23,7 @@ from app.research.validation import STANDARDS, strategy_validation
 from app.risk.engine import check_trade
 from app.services.account import current_state
 from app.services.alerts import alert_to_wire
+from app.services.calendar import news_exposure
 from app.strategies.library import STRATEGIES
 
 router = APIRouter(tags=["scanner"])
@@ -93,7 +94,17 @@ async def opportunities(
     items = [_signal_out(r) for r in rows]
     rules, state = await current_state(session)
     await session.commit()
+    s = get_settings()
+    now = datetime.now(UTC)
+    news_cache: dict[str, dict[str, Any]] = {}
     for item in items:
+        sym = item["symbol"]
+        if sym not in news_cache:
+            news_cache[sym] = await news_exposure(
+                session, sym, now, s.calendar_pre_event_minutes, s.calendar_post_event_minutes
+            )
+        item["news"] = news_cache[sym]
+        item["news_exposure"] = news_cache[sym]["summary"]
         item["risk"] = _risk(rules, state, item)
         item["rank_blockers"] = [b for b in item["rank_blockers"] if not b.startswith("Risk eligibility")]
         item["rank_blockers"].append(_risk_blocker(item["risk"]))
@@ -188,17 +199,13 @@ async def alerts(
     if unread_only:
         q = q.where(AlertRow.read_at.is_(None))
     rows = (await session.scalars(q.order_by(AlertRow.id.desc()).limit(limit))).all()
-    unread = await session.scalar(
-        select(func.count()).select_from(AlertRow).where(AlertRow.read_at.is_(None))
-    )
+    unread = await session.scalar(select(func.count()).select_from(AlertRow).where(AlertRow.read_at.is_(None)))
     return {"unread": int(unread or 0), "alerts": [alert_to_wire(r) for r in rows]}
 
 
 @router.post("/alerts/read-all", status_code=status.HTTP_204_NO_CONTENT)
 async def read_all(_: CurrentUser, session: SessionDep) -> Response:
-    await session.execute(
-        update(AlertRow).where(AlertRow.read_at.is_(None)).values(read_at=datetime.now(UTC))
-    )
+    await session.execute(update(AlertRow).where(AlertRow.read_at.is_(None)).values(read_at=datetime.now(UTC)))
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -179,9 +179,7 @@ def eod_timestamp(d: date) -> datetime:
     return datetime.combine(d, time(16, 59), tzinfo=ET).astimezone(UTC)
 
 
-async def import_balances(
-    session: AsyncSession, rows: list[tuple[date, Decimal]], user_id: uuid.UUID | None
-) -> int:
+async def import_balances(session: AsyncSession, rows: list[tuple[date, Decimal]], user_id: uuid.UUID | None) -> int:
     for d, bal in rows:
         session.add(
             AccountSnapshot(

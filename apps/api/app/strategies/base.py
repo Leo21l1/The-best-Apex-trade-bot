@@ -188,9 +188,7 @@ class Strategy:
     target_r: tuple[float, float] = (1.5, 2.5)
     window: tuple[time, time] = (time(9, 45), time(15, 30))
 
-    def _side(
-        self, ctx: MarketContext, s: int
-    ) -> tuple[list[Condition], float | None, tuple[float, ...] | None]:
+    def _side(self, ctx: MarketContext, s: int) -> tuple[list[Condition], float | None, tuple[float, ...] | None]:
         """Return (conditions, stop price or None, explicit targets or None)."""
         raise NotImplementedError
 
@@ -228,9 +226,7 @@ class Strategy:
         assert best is not None
         return Evaluation(sid, ctx.symbol, ctx.now, tuple(best[1]), None, best[2])
 
-    def _signal(
-        self, ctx: MarketContext, s: int, stop: float, targets: tuple[float, ...] | None
-    ) -> Signal | None:
+    def _signal(self, ctx: MarketContext, s: int, stop: float, targets: tuple[float, ...] | None) -> Signal | None:
         entry = ctx.round(ctx.m5[-1].close)
         stop = ctx.round(stop)
         risk = (entry - stop) * s

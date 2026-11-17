@@ -134,8 +134,7 @@ async def check_rule_profile() -> ComponentStatus:
     return ComponentStatus(
         name="apex_rule_profile",
         state=ComponentState.DEGRADED,
-        detail=f"{len(rs.unverified_rules)} of {total} required rules unverified. "
-        "No trade can be labelled compliant.",
+        detail=f"{len(rs.unverified_rules)} of {total} required rules unverified. No trade can be labelled compliant.",
         checked_at=_now(),
     )
 
@@ -154,7 +153,7 @@ def static_components() -> list[ComponentStatus]:
         ComponentStatus(
             name="ai_copilot",
             state=ComponentState.OK if s.anthropic_api_key else ComponentState.NOT_CONFIGURED,
-            detail="Anthropic API key present (server-side only)"
+            detail=f"API key configured server-side; model {s.copilot_model}"
             if s.anthropic_api_key
             else "APEX_ANTHROPIC_API_KEY not set",
             checked_at=now,

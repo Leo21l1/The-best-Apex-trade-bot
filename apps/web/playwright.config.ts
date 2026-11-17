@@ -20,6 +20,9 @@ const apiEnv = {
   APEX_MARKET_DATA_SYMBOLS: '["ES","NQ","CL"]',
   // 80h always reaches back past a weekend closure.
   APEX_MARKET_DATA_BACKFILL_HOURS: "80",
+  // Copilot talks to a scripted fake of the Anthropic API (scripts/fake_anthropic.py), never the real one.
+  APEX_ANTHROPIC_API_KEY: "e2e-test-key",
+  ANTHROPIC_BASE_URL: "http://127.0.0.1:8020",
 };
 
 export default defineConfig({
@@ -38,6 +41,12 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"] }, testMatch: /responsive\.spec\.ts/ },
   ],
   webServer: [
+    {
+      command: "python3 ../../scripts/fake_anthropic.py 8020",
+      url: "http://127.0.0.1:8020/",
+      reuseExistingServer: false,
+      timeout: 30_000,
+    },
     {
       command: `../../scripts/e2e-api.sh ${API_PORT}`,
       url: `http://127.0.0.1:${API_PORT}/api/health/live`,

@@ -17,7 +17,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={cx("rounded-lg border border-line bg-panel", className)}>
+    <section className={cx("min-w-0 rounded-lg border border-line bg-panel", className)}>
       {title !== undefined && (
         <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
           <h2 className="text-[13px] font-medium tracking-wide text-muted uppercase">{title}</h2>

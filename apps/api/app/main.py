@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.deps import rate_limit_key
-from app.api.routes import account, auth, health, market, scanner, ws
+from app.api.routes import account, auth, copilot, health, market, scanner, ws
 from app.core.config import Environment, get_settings
 from app.core.db import dispose_engine
 from app.core.execution_guard import POLICY
@@ -67,9 +67,7 @@ def create_app() -> FastAPI:
     )
 
     @app.middleware("http")
-    async def request_context(
-        request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
+    async def request_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         rid = request.headers.get("x-request-id") or uuid.uuid4().hex
         rid = rid[:64]
         token = request_id_var.set(rid)
@@ -115,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(market.router, prefix="/api")
     app.include_router(scanner.router, prefix="/api")
     app.include_router(account.router, prefix="/api")
+    app.include_router(copilot.router, prefix="/api")
     app.include_router(ws.router, prefix="/api")
     return app
 

@@ -257,6 +257,7 @@ export interface Opportunity {
   rank_eligible: boolean;
   rank_blockers: string[];
   risk?: OpportunityRisk;
+  news?: NewsExposure;
 }
 
 export interface OpportunitiesResponse {
@@ -434,6 +435,7 @@ export interface TradeCheck {
 
 export interface RiskCheckResponse {
   check: TradeCheck;
+  news: NewsExposure;
   instrument: { symbol: string; tick_size: number; tick_value: number; point_value: number; standard_equivalent: number };
   cost_assumptions: { commission_per_side: number; slippage_ticks_per_side: number };
   account: { known: boolean; stale: boolean; risk_budget: number | null; rules_verified: boolean };
@@ -447,4 +449,108 @@ export interface OpportunityRisk {
   warnings: string[];
   summary: string;
   budget_used_pct: number | null;
+}
+
+// ---- Phase 5: copilot, calendar, briefing --------------------------------------------------
+
+export interface CopilotToolCall {
+  name: string;
+  input: Record<string, unknown>;
+  is_error: boolean;
+  result: unknown;
+}
+
+export interface CopilotAnswer {
+  id: number;
+  answer: string;
+  tool_calls: CopilotToolCall[];
+  model: string | null;
+  stop_reason: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  fallback_used: boolean;
+  note: string | null;
+}
+
+export interface CopilotHistoryItem {
+  id: number;
+  created_at: string;
+  question: string;
+  answer: string | null;
+  tool_calls: CopilotToolCall[];
+  model: string | null;
+  stop_reason: string | null;
+  error: string | null;
+}
+
+export interface CopilotStatus {
+  configured: boolean;
+  model: string;
+  effort: string;
+  can_place_orders: false;
+  data_sent: string;
+}
+
+export interface EconomicEvent {
+  id: number;
+  ts: string;
+  title: string;
+  category: string;
+  importance: "high" | "medium" | "low";
+  affected: string[];
+  country: string;
+  source: "ics_file" | "ics_url" | "manual";
+  source_ref: string | null;
+  minutes_until: number;
+  in_window: boolean;
+  window: { pre_minutes: number; post_minutes: number };
+}
+
+export interface CalendarResponse {
+  as_of: string;
+  window: { pre_minutes: number; post_minutes: number };
+  apex_restrictions: string;
+  empty_calendar: boolean;
+  events: EconomicEvent[];
+  note: string;
+}
+
+export interface IcsImportResponse {
+  dry_run: boolean;
+  parsed: number;
+  written: number;
+  errors: string[];
+  preview: { ts: string; title: string; category: string; importance: string; affected: string[] }[];
+}
+
+export interface NewsExposure {
+  status: "unknown" | "clear" | "inside_window";
+  summary: string;
+  events: { title: string; ts: string; importance: string }[];
+}
+
+export interface BriefingResponse {
+  as_of: string;
+  phase: "premarket" | "live" | "postmarket" | "closed";
+  data: { provider: string | null; quality: DataQuality; scan_as_of: string | null };
+  checklist: { status: "ok" | "warning" | "critical"; text: string }[];
+  markets: {
+    symbol: string;
+    last: number | null;
+    regime: string;
+    vs_vwap: string | null;
+    prior_day_high: number | null;
+    prior_day_low: number | null;
+    prior_day_close: number | null;
+    overnight_high: number | null;
+    overnight_low: number | null;
+    opening_range_high: number | null;
+    opening_range_low: number | null;
+  }[];
+  events_today: EconomicEvent[];
+  account: { known: boolean; stale: boolean; risk_budget: number | null; drawdown_room: number | null; daily_loss_remaining: number | null };
+  active_candidates: number;
+  ranked_opportunities: number;
+  note: string;
 }

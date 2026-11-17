@@ -57,9 +57,40 @@ def start_ingestion(stop: asyncio.Event) -> asyncio.Task[None] | None:
     return asyncio.create_task(service.run(stop))
 
 
+async def calendar_sync(stop: asyncio.Event, interval_s: float = 6 * 3600) -> None:
+    """Fetch configured official ICS calendar URLs periodically (none by default)."""
+    import httpx
+
+    from app.services.calendar import parse_ics, upsert_events
+
+    urls = get_settings().calendar_ics_urls
+    if not urls:
+        return
+    async with httpx.AsyncClient(
+        timeout=30, follow_redirects=True, headers={"User-Agent": "project-apex-calendar/1.0"}
+    ) as client:
+        while not stop.is_set():
+            for url in urls:
+                try:
+                    r = await client.get(url)
+                    r.raise_for_status()
+                    events, errors = parse_ics(r.text)
+                    async with get_sessionmaker()() as session:
+                        n = await upsert_events(session, events, "ics_url", url)
+                        await session.commit()
+                    log_event(log, "calendar synced", url=url, events=n, errors=len(errors))
+                except (httpx.HTTPError, OSError) as exc:
+                    log_event(log, "calendar sync failed", level=logging.WARNING, url=url, error=type(exc).__name__)
+            try:
+                await asyncio.wait_for(stop.wait(), interval_s)
+            except TimeoutError:
+                pass
+
+
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
+    calendar = asyncio.create_task(calendar_sync(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
     while not stop.is_set():
         try:
@@ -70,7 +101,7 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    tasks = {t for t in (ingestion, scanner) if t is not None}
+    tasks = {t for t in (ingestion, scanner, calendar) if t is not None}
     await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if not t.done():

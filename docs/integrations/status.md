@@ -8,8 +8,8 @@ Last reviewed: 2026-11-17
 | Market data: `databento` | Adapter written, **unverified** | Historical 1-minute bars only. Not run against the live service (no API key; the build environment also blocks the host). |
 | Real-time market data | Not implemented | Needs a licensed streaming adapter (see below). |
 | Tradovate market data / read-only | Not used | See research below. |
-| Economic calendar | Not connected | Phase 5. Requires an authorised source. |
-| Claude API (copilot) | Not configured | Phase 5. Key stays on the API server. |
+| Economic calendar | Working with imported files | Official `.ics` import, manual entry, optional configured ICS URLs. Not tested against a live BLS/Fed download (hosts blocked here). |
+| Claude API (copilot) | Built, untested against the real API | Needs `APEX_ANTHROPIC_API_KEY`. Tested with a mocked transport and a scripted fake server. |
 
 ## Tradovate data access: research findings
 

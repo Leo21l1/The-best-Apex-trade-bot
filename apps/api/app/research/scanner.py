@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.logging import log_event
-from app.marketdata.calendar import floor_minute, is_market_open
+from app.marketdata.calendar import ET, floor_minute, is_market_open
 from app.marketdata.feed import STATUS_KEY
 from app.models.signal import SignalRow
 from app.research.bars import Bar
@@ -42,9 +42,7 @@ SCAN_TTL_S = 180
 SIGNAL_MAX_AGE = timedelta(minutes=60)
 
 
-async def load_bars(
-    session: AsyncSession, provider: str, symbol: str, since: datetime, until: datetime
-) -> list[Bar]:
+async def load_bars(session: AsyncSession, provider: str, symbol: str, since: datetime, until: datetime) -> list[Bar]:
     """Closed 1-minute bars in [since, until), oldest first."""
     res = await session.execute(
         text(
@@ -158,6 +156,7 @@ class ScannerService:
         async with self._sessionmaker() as session:
             await self._feed_alert(session, provider, feed)
             await self._account_alerts(session, now)
+            await self._event_alerts(session, now)
             await session.commit()
         try:
             await self._redis.set(SCAN_KEY, json.dumps(doc), ex=SCAN_TTL_S)
@@ -199,8 +198,7 @@ class ScannerService:
             kind="opportunity_detected",
             severity="info",
             symbol=opp["symbol"],
-            title=f"{self._tag(opp['quality'])}{opp['symbol']} {opp['direction']} candidate: "
-            f"{opp['strategy_id']}",
+            title=f"{self._tag(opp['quality'])}{opp['symbol']} {opp['direction']} candidate: {opp['strategy_id']}",
             body=f"Unvalidated research candidate. Entry {opp['entry']}, stop {opp['stop']}, "
             f"first target {opp['targets'][0]} ({opp['reward_risk']}R). "
             f"Setup score {opp['score']} (not a probability).",
@@ -247,9 +245,7 @@ class ScannerService:
                     data={"signal_id": row.id},
                 )
 
-    async def _regime_alert(
-        self, session: AsyncSession, symbol: str, radar: dict[str, Any], quality: str
-    ) -> None:
+    async def _regime_alert(self, session: AsyncSession, symbol: str, radar: dict[str, Any], quality: str) -> None:
         label = radar["regime"]
         prev = self._regimes.get(symbol)
         self._regimes[symbol] = label
@@ -322,6 +318,28 @@ class ScannerService:
                 "(on user-entered figures; advisory).",
                 dedupe_key=f"risk:{level}:{day}",
                 cooldown_s=4 * 3600,
+            )
+
+    async def _event_alerts(self, session: AsyncSession, now: datetime) -> None:
+        """One alert per high/medium event once it enters the pre-event window."""
+        from app.services.calendar import events_between
+
+        pre = self.settings.calendar_pre_event_minutes
+        for ev in await events_between(session, now, now + timedelta(minutes=pre)):
+            if ev.importance not in ("high", "medium") or not ev.affected:
+                continue
+            minutes = max(0, round((ev.ts - now).total_seconds() / 60))
+            await emit_alert(
+                session,
+                self._redis,
+                kind="economic_event",
+                severity="warning" if ev.importance == "high" else "info",
+                title=f"{ev.title} in {minutes} min",
+                body=f"Scheduled {ev.ts.astimezone(ET):%H:%M} ET; affects {', '.join(ev.affected)}. "
+                "Apex news-trading restrictions are unverified; check the rule profile.",
+                dedupe_key=f"event:{ev.id}",
+                cooldown_s=24 * 3600,
+                data={"event_id": ev.id},
             )
 
     async def run(self, stop: asyncio.Event) -> None:

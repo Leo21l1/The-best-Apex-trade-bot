@@ -107,9 +107,7 @@ async def test_aggregation_matches_hand_computed_bars() -> None:
         # limit / before pagination, oldest first
         m1 = await query_bars(s, provider="test", symbol="ES", timeframe=Timeframe.M1, limit=3)
         assert [b.ts.minute for b in m1] == [7, 8, 9]
-        older = await query_bars(
-            s, provider="test", symbol="ES", timeframe=Timeframe.M1, limit=3, before=m1[0].ts
-        )
+        older = await query_bars(s, provider="test", symbol="ES", timeframe=Timeframe.M1, limit=3, before=m1[0].ts)
         assert [b.ts.minute for b in older] == [4, 5, 6]
         # provider and symbol isolation
         assert await query_bars(s, provider="other", symbol="ES", timeframe=Timeframe.M1) == []

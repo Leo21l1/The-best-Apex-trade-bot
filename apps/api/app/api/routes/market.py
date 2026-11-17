@@ -97,9 +97,7 @@ async def candles(
         return CandlesOut(symbol=sym, timeframe=timeframe.value, provenance=_unavailable(now), bars=[])
     if before is not None and before.tzinfo is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "before must include a timezone")
-    bars = await query_bars(
-        session, provider=provider, symbol=sym, timeframe=timeframe, limit=limit, before=before
-    )
+    bars = await query_bars(session, provider=provider, symbol=sym, timeframe=timeframe, limit=limit, before=before)
     last = (await last_bar_times(session, provider)).get(sym)
     s = get_settings()
     fresh = symbol_freshness(last.isoformat() if last else None, now, s.market_data_stale_seconds)

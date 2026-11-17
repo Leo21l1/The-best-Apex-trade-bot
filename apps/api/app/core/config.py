@@ -34,9 +34,7 @@ _DEV_SECRET = "dev-insecure-secret-change-me-0123456789abcdef"  # noqa: S105 - d
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="APEX_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="APEX_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     environment: Environment = Environment.DEVELOPMENT
     app_name: str = "PROJECT APEX"
@@ -108,8 +106,19 @@ class Settings(BaseSettings):
     # Advisory cap: warn when one trade would use more than this share of the remaining budget.
     risk_max_trade_fraction: float = Field(default=0.25, gt=0, le=1)
 
-    # AI (Phase 5). Optional; never sent to the browser.
+    # AI copilot (Phase 5). Optional; the key never leaves the server.
     anthropic_api_key: SecretStr | None = None
+    copilot_model: str = "claude-opus-5-5"
+    copilot_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    copilot_max_tool_rounds: int = Field(default=8, ge=1, le=20)
+    copilot_rate_limit_per_minute: int = Field(default=12, ge=1)
+    copilot_timeout_seconds: float = Field(default=120, ge=5)
+
+    # Economic calendar (Phase 5)
+    calendar_pre_event_minutes: int = Field(default=15, ge=0, le=240)
+    calendar_post_event_minutes: int = Field(default=15, ge=0, le=240)
+    #: Official .ics calendar URLs fetched daily by the worker (e.g. the BLS release schedule).
+    calendar_ics_urls: list[str] = []
 
     @property
     def execution_mode(self) -> ExecutionMode:
