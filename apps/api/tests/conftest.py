@@ -47,13 +47,17 @@ async def _clean_state() -> AsyncIterator[None]:
     original = settings.model_copy()
     settings.auth_rate_limit_per_minute = 1000
     settings.rate_limit_per_minute = 10_000
+    settings.user_rate_limit_per_minute = 10_000
     rate_limiter.reset_local()
     yield
     for field in type(settings).model_fields:
         setattr(settings, field, getattr(original, field))
     async with get_engine().begin() as conn:
         await conn.execute(
-            text("TRUNCATE alerts, signals, candles, audit_logs, users RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE account_snapshots, rules, alerts, signals, candles, audit_logs, users "
+                "RESTART IDENTITY CASCADE"
+            )
         )
     await get_redis().flushdb()
 

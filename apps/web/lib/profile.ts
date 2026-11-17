@@ -1,7 +1,6 @@
 /**
  * The trader's declared configuration (from the project brief). This is configuration, not
- * market or account data. Apex values are PROVISIONAL REFERENCE VALUES and remain unverified
- * until Phase 4 checks them against official Apex documentation.
+ * market or account data. Apex rule values live in the API's rule profile.
  */
 export const TRADER_PROFILE = {
   propFirm: "Apex Trader Funding",
@@ -24,16 +23,5 @@ export const TRADER_PROFILE = {
     "Liquidity sweep reversals",
     "Trend continuation",
     "High-quality mean reversion",
-  ],
-} as const;
-
-export const PROVISIONAL_APEX_RULES = {
-  verified: false,
-  values: [
-    { label: "Starting balance", value: 50_000 },
-    { label: "Evaluation profit target", value: 3_000 },
-    { label: "Maximum EOD drawdown", value: 2_000 },
-    { label: "Daily loss limit", value: 1_000 },
-    { label: "Maximum standard contracts", value: 6, unit: "contracts" as const },
   ],
 } as const;

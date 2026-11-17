@@ -256,6 +256,7 @@ export interface Opportunity {
   uncertainty: string[];
   rank_eligible: boolean;
   rank_blockers: string[];
+  risk?: OpportunityRisk;
 }
 
 export interface OpportunitiesResponse {
@@ -305,4 +306,145 @@ export interface Alert {
 export interface AlertsResponse {
   unread: number;
   alerts: Alert[];
+}
+
+// ---- Phase 4: rules, account, risk ---------------------------------------------------------
+
+export interface Rule {
+  key: string;
+  label: string;
+  kind: "money" | "contracts" | "text";
+  value: string;
+  required: boolean;
+  verified: boolean;
+  source_url: string | null;
+  suggested_source_url: string | null;
+  verified_at: string | null;
+  applies_to: string | null;
+  version: string | null;
+  notes: string | null;
+}
+
+export interface RulesResponse {
+  profile: string;
+  label: string;
+  verified: boolean;
+  unverified: string[];
+  rules: Rule[];
+  warning: string | null;
+}
+
+export interface AccountPosition {
+  symbol: string;
+  quantity: number;
+  avg_price: number;
+  stop: number | null;
+}
+
+export interface AccountState {
+  as_of: string;
+  profile: string;
+  rules_verified: boolean;
+  known: boolean;
+  source: string | null;
+  snapshot_at: string | null;
+  snapshot_age_seconds: number | null;
+  stale: boolean;
+  trading_date: string | null;
+  balance: number | null;
+  unrealized_pnl: number | null;
+  equity: number | null;
+  highest_eod_balance: number | null;
+  drawdown_threshold: number | null;
+  drawdown_room: number | null;
+  start_of_day_balance: number | null;
+  day_pnl: number | null;
+  daily_loss_remaining: number | null;
+  risk_budget: number | null;
+  profit_to_target: number | null;
+  target_reached: boolean;
+  drawdown_breached: boolean;
+  daily_loss_hit: boolean;
+  contracts_in_use: number;
+  positions: AccountPosition[];
+  warnings: string[];
+}
+
+export interface RuleSetValues {
+  starting_balance: number;
+  profit_target: number;
+  max_drawdown: number;
+  daily_loss_limit: number;
+  max_contracts: number;
+  drawdown_stop_level: number | null;
+  verified: boolean;
+  unverified_rules: string[];
+}
+
+export interface AccountStateResponse {
+  rules: RuleSetValues;
+  state: AccountState;
+  disclaimer: string;
+}
+
+export interface AccountSnapshot {
+  id: number;
+  as_of: string;
+  created_at: string;
+  source: "manual" | "csv";
+  balance: string;
+  unrealized_pnl: string;
+  is_eod: boolean;
+  trading_date: string;
+  positions: { symbol: string; quantity: number; avg_price: string; stop: string | null }[];
+  note: string | null;
+}
+
+export interface CsvImportResponse {
+  dry_run: boolean;
+  imported: number;
+  rows: [string, string][];
+  errors: string[];
+  date_column: string | null;
+  balance_column: string | null;
+}
+
+export interface TradeCheck {
+  symbol: string;
+  direction: "long" | "short";
+  quantity: number;
+  entry: number;
+  stop: number;
+  target: number | null;
+  stop_ticks: number;
+  dollar_risk: number;
+  cost: number;
+  loss_after_costs: number;
+  reward_risk: number | null;
+  max_size: number | null;
+  max_size_by_risk: number | null;
+  max_size_by_contract_limit: number;
+  budget_used_pct: number | null;
+  violations: string[];
+  warnings: string[];
+  verdict: "violation" | "cannot_confirm" | "no_violation_found";
+  may_be_called_compliant: boolean;
+  summary: string;
+}
+
+export interface RiskCheckResponse {
+  check: TradeCheck;
+  instrument: { symbol: string; tick_size: number; tick_value: number; point_value: number; standard_equivalent: number };
+  cost_assumptions: { commission_per_side: number; slippage_ticks_per_side: number };
+  account: { known: boolean; stale: boolean; risk_budget: number | null; rules_verified: boolean };
+  disclaimer: string;
+}
+
+export interface OpportunityRisk {
+  verdict: "violation" | "cannot_confirm" | "no_violation_found" | "invalid";
+  max_size: number | null;
+  violations: string[];
+  warnings: string[];
+  summary: string;
+  budget_used_pct: number | null;
 }

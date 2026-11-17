@@ -1,15 +1,16 @@
 "use client";
 
-import type { SnapshotResponse } from "@apex/shared-types";
+import type { AccountStateResponse, RulesResponse, SnapshotResponse } from "@apex/shared-types";
 import Link from "next/link";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, EmptyState, Panel, QualityBadge, Stat, StatePill } from "@/components/ui/primitives";
 import { usePolling } from "@/hooks/usePolling";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { formatPrice } from "@/lib/candles";
-import { formatEt, formatUsd, humanizeComponent } from "@/lib/format";
+import { formatEt, humanizeComponent } from "@/lib/format";
 import { COMPLETED_PHASE, NAV } from "@/lib/nav";
-import { PROVISIONAL_APEX_RULES, TRADER_PROFILE } from "@/lib/profile";
+import { money } from "@/lib/money";
+import { TRADER_PROFILE } from "@/lib/profile";
 
 const TICKS: Record<string, number> = { ES: 0.25, NQ: 0.25, YM: 1, RTY: 0.1, CL: 0.01, GC: 0.1 };
 
@@ -17,6 +18,8 @@ export function Overview() {
   const { status } = useSystemStatus();
   const { data: snap } = usePolling<SnapshotResponse>("/api/market/snapshot", 10_000);
   const quality = snap?.provenance.quality ?? "unavailable";
+  const { data: acct } = usePolling<AccountStateResponse>("/api/account/state", 20_000);
+  const { data: rules } = usePolling<RulesResponse>("/api/rules", 60_000);
   return (
     <>
       <PageHeader path="/" />
@@ -26,11 +29,13 @@ export function Overview() {
           PROJECT APEX never places, cancels or modifies orders. You place and manage every order
           manually in your authorised Tradovate interface.
         </Callout>
-        <Callout tone="warn" title="Apex rule profile is UNVERIFIED">
-          The values below are provisional reference values from your configuration. Until each
-          rule is verified against official Apex documentation (Phase 4), no trade will be
-          labelled compliant.
-        </Callout>
+        {rules && !rules.verified && (
+          <Callout tone="warn" title="Apex rule profile is UNVERIFIED">
+            {rules.unverified.length} required rule(s) have not been checked against official Apex documentation.
+            Until they are, no trade will be labelled compliant.{" "}
+            <Link href="/account" className="underline">Verify rules</Link>
+          </Callout>
+        )}
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -89,26 +94,36 @@ export function Overview() {
         </Panel>
 
         <Panel title="Risk budget">
-          <EmptyState title="Unknown">
-            No account snapshot has been entered. Risk budget is treated as unknown — not as
-            available.
-          </EmptyState>
+          {!acct?.state.known ? (
+            <EmptyState title="Unknown">
+              No account snapshot has been entered. Risk budget is treated as unknown — not as available.{" "}
+              <Link href="/account" className="text-accent hover:underline">Enter balance</Link>
+            </EmptyState>
+          ) : (
+            <div data-testid="overview-risk">
+              <p className={acct.state.stale ? "font-mono text-2xl text-warn" : "font-mono text-2xl"}>
+                {acct.state.stale ? "Unknown (stale)" : money(acct.state.risk_budget)}
+              </p>
+              <dl className="mt-3 space-y-1.5 text-sm">
+                <div className="flex justify-between"><dt className="text-muted">Drawdown room</dt><dd className="font-mono">{money(acct.state.drawdown_room)}</dd></div>
+                <div className="flex justify-between"><dt className="text-muted">Daily loss remaining</dt><dd className="font-mono">{money(acct.state.daily_loss_remaining)}</dd></div>
+                <div className="flex justify-between"><dt className="text-muted">Equity</dt><dd className="font-mono">{money(acct.state.equity)}</dd></div>
+              </dl>
+              <p className="mt-2 text-xs text-faint">From the snapshot you entered; advisory.</p>
+            </div>
+          )}
         </Panel>
 
-        <Panel title="Provisional Apex reference values">
+        <Panel title="Apex rule values" actions={<StatePill state={rules?.verified ? "ok" : "degraded"} label={rules?.verified ? "Verified" : "Unverified"} />}>
           <dl className="space-y-2 text-sm">
-            {PROVISIONAL_APEX_RULES.values.map((r) => (
-              <div key={r.label} className="flex justify-between gap-3">
-                <dt className="text-muted">{r.label}</dt>
-                <dd className="font-mono">
-                  {"unit" in r ? `${r.value} ${r.unit}` : formatUsd(r.value)}
-                </dd>
+            {(rules?.rules ?? []).filter((r) => r.kind !== "text" && r.value).map((r) => (
+              <div key={r.key} className="flex justify-between gap-3">
+                <dt className="text-muted">{r.label.replace(" (1 micro = 0.1)", "")}</dt>
+                <dd className="font-mono">{r.kind === "money" ? money(Number(r.value)) : `${r.value} contracts`}</dd>
               </div>
             ))}
           </dl>
-          <div className="mt-3">
-            <StatePill state="degraded" label="Unverified" />
-          </div>
+          <Link href="/account" className="mt-3 inline-block text-xs text-accent hover:underline">Review and verify rules →</Link>
         </Panel>
 
         <Panel title="System" className="lg:col-span-2">

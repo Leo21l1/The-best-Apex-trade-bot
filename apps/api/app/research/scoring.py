@@ -88,7 +88,7 @@ def build_opportunity(
         blockers.append(f"Strategy not validated: {val.reason}")
     if quality not in ("live", "delayed"):
         blockers.append(f"Data class is {quality.upper()}; ranking requires live or delayed data.")
-    blockers.append("Risk eligibility not evaluated (Risk Guardian arrives in Phase 4).")
+    blockers.append("Risk eligibility is evaluated when viewed, against the current account snapshot.")
 
     uncertainty = [SCORE_NOTE]
     if quality == "simulated":
@@ -129,7 +129,7 @@ def build_opportunity(
             "expectancy_r": val.expectancy_r,
         },
         "news_exposure": "unknown (economic calendar not connected until Phase 5)",
-        "risk_eligibility": "not evaluated",
+        "risk_eligibility": "evaluated on request",
         "uncertainty": uncertainty,
         "rank_eligible": False,
         "rank_blockers": blockers,

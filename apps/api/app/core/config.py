@@ -58,8 +58,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # Rate limiting (per client IP, token bucket)
+    # Unauthenticated requests are limited per client IP; signed-in requests per user.
     rate_limit_per_minute: int = 240
+    user_rate_limit_per_minute: int = 1200
     auth_rate_limit_per_minute: int = 10
+    # Direct peers whose X-Forwarded-For header is trusted (the Next.js server / reverse proxy).
+    trusted_proxies: list[str] = ["127.0.0.1", "::1"]
 
     # Worker heartbeat considered stale after this many seconds
     worker_heartbeat_stale_seconds: int = 30
@@ -97,6 +101,12 @@ class Settings(BaseSettings):
     cost_commission_per_side_standard: float = Field(default=2.50, ge=0)
     cost_commission_per_side_micro: float = Field(default=0.60, ge=0)
     cost_slippage_ticks_per_side: float = Field(default=1.0, ge=0)
+
+    # Risk (Phase 4)
+    # An account snapshot older than this while the market is open is treated as stale.
+    account_stale_minutes: int = Field(default=30, ge=1)
+    # Advisory cap: warn when one trade would use more than this share of the remaining budget.
+    risk_max_trade_fraction: float = Field(default=0.25, gt=0, le=1)
 
     # AI (Phase 5). Optional; never sent to the browser.
     anthropic_api_key: SecretStr | None = None

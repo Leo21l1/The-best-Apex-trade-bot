@@ -106,17 +106,45 @@ async def check_worker() -> ComponentStatus:
     )
 
 
+async def check_rule_profile() -> ComponentStatus:
+    """Verification status of the Apex rule profile."""
+    from app.core.db import get_sessionmaker
+    from app.risk.profile import load_rules, to_ruleset
+
+    try:
+        async with get_sessionmaker()() as session:
+            rows = await load_rules(session)
+            await session.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        return ComponentStatus(
+            name="apex_rule_profile",
+            state=ComponentState.DOWN,
+            detail=f"Cannot read rule profile ({type(exc).__name__})",
+            checked_at=_now(),
+        )
+    rs = to_ruleset(rows)
+    if rs.verified:
+        return ComponentStatus(
+            name="apex_rule_profile",
+            state=ComponentState.OK,
+            detail="All required rules verified against official sources.",
+            checked_at=_now(),
+        )
+    total = sum(1 for r in rows if r.required)
+    return ComponentStatus(
+        name="apex_rule_profile",
+        state=ComponentState.DEGRADED,
+        detail=f"{len(rs.unverified_rules)} of {total} required rules unverified. "
+        "No trade can be labelled compliant.",
+        checked_at=_now(),
+    )
+
+
 def static_components() -> list[ComponentStatus]:
     """Integrations not yet built are reported honestly rather than hidden."""
     s = get_settings()
     now = _now()
     return [
-        ComponentStatus(
-            name="apex_rule_profile",
-            state=ComponentState.NOT_CONFIGURED,
-            detail="Rule profile not loaded. No trade can be labelled compliant.",
-            checked_at=now,
-        ),
         ComponentStatus(
             name="tradovate_readonly",
             state=ComponentState.NOT_CONFIGURED,
@@ -136,9 +164,11 @@ def static_components() -> list[ComponentStatus]:
 
 def overall_state(components: list[ComponentStatus]) -> ComponentState:
     core = {"database", "redis"}
-    if any(c.state == ComponentState.DOWN and c.name in core for c in components):
+    # Rule verification is a compliance status, not infrastructure health; it is reported on its own.
+    infra = [c for c in components if c.name != "apex_rule_profile"]
+    if any(c.state == ComponentState.DOWN and c.name in core for c in infra):
         return ComponentState.DOWN
-    if any(c.state in (ComponentState.DOWN, ComponentState.DEGRADED) for c in components):
+    if any(c.state in (ComponentState.DOWN, ComponentState.DEGRADED) for c in infra):
         return ComponentState.DEGRADED
     return ComponentState.OK
 
@@ -150,7 +180,17 @@ async def system_status() -> SystemStatus:
     db, redis, worker, md = await asyncio.gather(
         check_database(), check_redis(), check_worker(), market_data_component()
     )
-    components = [db, redis, worker, md, *static_components()]
+    rules = (
+        await check_rule_profile()
+        if db.state == ComponentState.OK
+        else ComponentStatus(
+            name="apex_rule_profile",
+            state=ComponentState.DOWN,
+            detail="Database unavailable",
+            checked_at=_now(),
+        )
+    )
+    components = [db, redis, worker, md, rules, *static_components()]
     quality, provider = await current_quality()
     return SystemStatus(
         app=s.app_name,

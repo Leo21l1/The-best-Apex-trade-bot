@@ -20,7 +20,35 @@ CSRF_VALUE = "apex"
 
 
 def client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    """Real client address.
+
+    ``X-Forwarded-For`` is honoured only when the direct peer is a configured trusted proxy, and
+    then the right-most address that is not itself a trusted proxy is used (left-most entries can
+    be forged by the client).
+    """
+    peer = request.client.host if request.client else "unknown"
+    trusted = set(get_settings().trusted_proxies)
+    if peer not in trusted:
+        return peer
+    forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    for addr in reversed(forwarded):
+        if addr not in trusted:
+            return addr[:64]
+    return peer
+
+
+def rate_limit_key(request: Request) -> tuple[str, bool]:
+    """(key, authenticated). Valid session tokens are limited per user, everything else per IP.
+
+    Only the token signature and claims are checked here (no database access); revoked tokens are
+    still rejected later by the route's authentication dependency.
+    """
+    token, _ = extract_token(request)
+    if token:
+        claims = decode_access_token(token)
+        if claims and claims.get("sub"):
+            return f"user:{claims['sub']}", True
+    return f"ip:{client_ip(request)}", False
 
 
 def extract_token(request: Request) -> tuple[str | None, bool]:

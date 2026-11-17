@@ -56,7 +56,7 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page.getByTestId("component-market_data")).toContainText("simulated (SIMULATED)", {
       timeout: 30_000,
     });
-    await expect(page.getByTestId("component-apex_rule_profile")).toContainText("Not configured");
+    await expect(page.getByTestId("component-apex_rule_profile")).toContainText("rules unverified");
     await expect(page.getByTestId("feed-state")).toHaveText("streaming", { timeout: 30_000 });
 
     // Command palette -> Risk Guardian
@@ -64,7 +64,7 @@ test.describe.serial("dashboard workflows", () => {
     await page.getByLabel("Search pages").fill("risk guard");
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { name: "Risk Guardian" })).toBeVisible();
-    await expect(page.getByText(/Not available yet — scheduled for Phase 4/)).toBeVisible();
+    await expect(page.getByText("Deterministic and advisory")).toBeVisible();
 
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/login$/);

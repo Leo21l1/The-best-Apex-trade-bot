@@ -11,8 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.deps import client_ip
-from app.api.routes import auth, health, market, scanner, ws
+from app.api.deps import rate_limit_key
+from app.api.routes import account, auth, health, market, scanner, ws
 from app.core.config import Environment, get_settings
 from app.core.db import dispose_engine
 from app.core.execution_guard import POLICY
@@ -76,7 +76,9 @@ def create_app() -> FastAPI:
         start = time.perf_counter()
         try:
             if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/health"):
-                if not await rate_limiter.hit("api", client_ip(request), s.rate_limit_per_minute):
+                key, authed = rate_limit_key(request)
+                limit = s.user_rate_limit_per_minute if authed else s.rate_limit_per_minute
+                if not await rate_limiter.hit("api", key, limit):
                     return JSONResponse(
                         {"detail": "Rate limit exceeded"},
                         status_code=429,
@@ -112,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     app.include_router(market.router, prefix="/api")
     app.include_router(scanner.router, prefix="/api")
+    app.include_router(account.router, prefix="/api")
     app.include_router(ws.router, prefix="/api")
     return app
 

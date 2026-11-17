@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from redis.asyncio import Redis
@@ -156,6 +157,7 @@ class ScannerService:
                 await session.commit()
         async with self._sessionmaker() as session:
             await self._feed_alert(session, provider, feed)
+            await self._account_alerts(session, now)
             await session.commit()
         try:
             await self._redis.set(SCAN_KEY, json.dumps(doc), ex=SCAN_TTL_S)
@@ -282,6 +284,45 @@ class ScannerService:
             dedupe_key=f"feed:{state}",
             cooldown_s=self.settings.alert_cooldown_seconds,
         )
+
+    async def _account_alerts(self, session: AsyncSession, now: datetime) -> None:
+        """Warn when account data goes stale during a session or the risk budget runs low."""
+        from app.services.account import current_state
+
+        rules, state = await current_state(session, now)
+        if not state.known or not is_market_open(now):
+            return
+        day = state.trading_date.isoformat() if state.trading_date else ""
+        if state.stale:
+            await emit_alert(
+                session,
+                self._redis,
+                kind="account_stale",
+                severity="warning",
+                title="Account data is stale",
+                body="Enter a fresh balance on Apex Account Health. Remaining risk is treated as unknown.",
+                dedupe_key=f"acct-stale:{day}",
+                cooldown_s=3600,
+            )
+        budget, limit = state.risk_budget, rules.daily_loss_limit
+        if budget is not None and limit > 0:
+            if budget <= 0:
+                level, sev = "exhausted", "critical"
+            elif budget <= limit * Decimal("0.25"):
+                level, sev = "below 25%", "warning"
+            else:
+                return
+            await emit_alert(
+                session,
+                self._redis,
+                kind="risk_threshold",
+                severity=sev,
+                title=f"Risk budget {level}",
+                body=f"Remaining risk budget ${budget} of the ${limit} daily allowance "
+                "(on user-entered figures; advisory).",
+                dedupe_key=f"risk:{level}:{day}",
+                cooldown_s=4 * 3600,
+            )
 
     async def run(self, stop: asyncio.Event) -> None:
         log_event(log, "scanner started", interval_s=self.settings.scanner_interval_seconds)

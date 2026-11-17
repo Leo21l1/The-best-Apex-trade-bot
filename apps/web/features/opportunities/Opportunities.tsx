@@ -161,7 +161,7 @@ function Explain({ o }: { o: Opportunity }) {
         <ul className="list-disc space-y-0.5 pl-4 text-muted">
           {o.uncertainty.map((u) => <li key={u}>{u}</li>)}
           <li>News exposure: {o.news_exposure}</li>
-          <li>Risk eligibility: {o.risk_eligibility}</li>
+          <li>Risk check (1 contract): {o.risk ? `${o.risk.verdict.replaceAll("_", " ")}; max size ${o.risk.max_size ?? "unknown"}` : o.risk_eligibility}</li>
         </ul>
       </div>
     </div>

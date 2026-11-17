@@ -41,7 +41,8 @@ async def test_system_status_is_honest(admin_client: httpx.AsyncClient) -> None:
     comps = {c["name"]: c for c in body["components"]}
     # Nothing that is not built may claim to be OK.
     assert comps["market_data"]["state"] == "not_configured"
-    assert comps["apex_rule_profile"]["state"] == "not_configured"
+    assert comps["apex_rule_profile"]["state"] == "degraded"
+    assert "15 of 15 required rules unverified" in comps["apex_rule_profile"]["detail"]
     assert comps["tradovate_readonly"]["state"] == "not_configured"
     # No worker running in tests -> worker down -> overall degraded.
     assert comps["worker"]["state"] == "down"

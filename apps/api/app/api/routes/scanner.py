@@ -12,12 +12,16 @@ from redis.exceptions import RedisError
 from sqlalchemy import func, select, update
 
 from app.api.deps import CurrentUser, SessionDep
+from app.api.routes.account import cost_model_for
 from app.core.config import get_settings
 from app.core.redis import get_redis
+from app.marketdata.instruments import INSTRUMENTS
 from app.models.signal import AlertRow, SignalRow
 from app.research.scanner import SCAN_KEY
 from app.research.scoring import SCORE_NOTE
 from app.research.validation import STANDARDS, strategy_validation
+from app.risk.engine import check_trade
+from app.services.account import current_state
 from app.services.alerts import alert_to_wire
 from app.strategies.library import STRATEGIES
 
@@ -87,6 +91,13 @@ async def opportunities(
         q = q.where(SignalRow.strategy_id == strategy_id)
     rows = (await session.scalars(q.order_by(SignalRow.created_at.desc()).limit(300))).all()
     items = [_signal_out(r) for r in rows]
+    rules, state = await current_state(session)
+    await session.commit()
+    for item in items:
+        item["risk"] = _risk(rules, state, item)
+        item["rank_blockers"] = [b for b in item["rank_blockers"] if not b.startswith("Risk eligibility")]
+        item["rank_blockers"].append(_risk_blocker(item["risk"]))
+        item["risk_eligibility"] = item["risk"]["verdict"]
     ranked = sorted(
         (i for i in items if i.get("rank_eligible") and i["status"] == "active"),
         key=lambda i: i["score"],
@@ -103,6 +114,56 @@ async def opportunities(
         "ranking_rule": "Ranked = validated strategy AND live/delayed data AND risk-eligible, "
         "ordered by setup score. Zero ranked opportunities is a valid result.",
     }
+
+
+def _risk(rules: Any, state: Any, item: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic one-contract check of a candidate against the current account."""
+    from decimal import Decimal
+
+    inst = INSTRUMENTS[item["symbol"]]
+    try:
+        c = check_trade(
+            rules,
+            state,
+            inst,
+            item["direction"],
+            Decimal(str(item["entry"])),
+            Decimal(str(item["stop"])),
+            Decimal(str(item["targets"][0])),
+            1,
+            cost_model_for(inst.symbol),
+            INSTRUMENTS,
+            Decimal(str(get_settings().risk_max_trade_fraction)),
+        )
+    except ValueError as exc:
+        return {
+            "verdict": "invalid",
+            "max_size": None,
+            "violations": [str(exc)],
+            "warnings": [],
+            "summary": str(exc),
+            "budget_used_pct": None,
+        }
+    return {
+        "verdict": c.verdict,
+        "max_size": c.max_size,
+        "violations": list(c.violations),
+        "warnings": list(c.warnings),
+        "summary": c.summary,
+        "budget_used_pct": float(c.budget_used_pct) if c.budget_used_pct is not None else None,
+    }
+
+
+def _risk_blocker(risk: dict[str, Any]) -> str:
+    if risk["verdict"] == "violation":
+        return "Risk check: " + "; ".join(risk["violations"])
+    if risk["verdict"] == "cannot_confirm":
+        return "Risk check: account data missing or stale, so eligibility cannot be confirmed."
+    if risk["verdict"] == "invalid":
+        return "Risk check failed: " + risk["summary"]
+    if risk["max_size"] == 0:
+        return "Risk check: the remaining risk budget does not cover one contract."
+    return "Risk check passed on configured values, but the rule profile must be verified to rank."
 
 
 @router.get("/strategies")

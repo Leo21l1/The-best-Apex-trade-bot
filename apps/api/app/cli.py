@@ -47,7 +47,10 @@ async def reset_db() -> int:
         return 1
     async with get_engine().begin() as conn:
         await conn.execute(
-            text("TRUNCATE alerts, signals, candles, audit_logs, users RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE account_snapshots, rules, alerts, signals, candles, audit_logs, users "
+                "RESTART IDENTITY CASCADE"
+            )
         )
     print("Database tables truncated")
     return 0
