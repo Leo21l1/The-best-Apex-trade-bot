@@ -227,10 +227,22 @@ def reaction(bars: list[Bar], at: datetime, minutes: int = 15) -> dict[str, Any]
     }
 
 
+FRESH_DETECTED = timedelta(minutes=15)
+FRESH_PUBLISHED = timedelta(hours=2)
+
+
+def is_fresh(item: NewsItem, now: datetime) -> bool:
+    """Detected in the last 15 minutes AND published in the last 2 hours.
+
+    An old release found on a first sync is not breaking news, whatever its detection time.
+    """
+    return now - item.detected_at < FRESH_DETECTED and now - item.published_at < FRESH_PUBLISHED
+
+
 def bias(item: NewsItem, now: datetime, symbol: str | None = None) -> dict[str, str]:
     """BUY / SHORT / WAIT / NO TRADE for an item, never inferred from wording."""
     hot = item.impact in ("HIGH", "CRITICAL")
-    if hot and now - item.detected_at < timedelta(minutes=15):
+    if hot and is_fresh(item, now):
         return {"bias": "NO TRADE", "why": f"{item.impact} release detected less than 15 minutes ago; let it settle."}
     rx = (item.reaction or {}).get(symbol or (item.instruments[0] if item.instruments else ""), None)
     if hot and rx and (rx.get("range_ratio") or 0) >= 1.5 and rx["direction"] != "flat":
@@ -343,6 +355,10 @@ async def measure_reactions(session: AsyncSession, now: datetime) -> int:
     done = 0
     for n in rows:
         # The reaction is measured from detection: APEX could not have acted before it saw the item.
+        # Items discovered long after publication (e.g. on a first sync) have no actionable reaction.
+        if n.detected_at - n.published_at > FRESH_PUBLISHED:
+            n.reaction = {}
+            continue
         out = {}
         for sym in n.instruments[:4]:
             bars = await load_bars(

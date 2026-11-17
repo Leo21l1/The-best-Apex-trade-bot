@@ -126,3 +126,32 @@ async def test_fresh_high_impact_news_forces_no_trade(admin_client: httpx.AsyncC
         await s.commit()
     c = (await admin_client.get("/api/smc/confluence", params={"symbol": "ES"})).json()
     assert c["outcome"] == "NO TRADE" and any("Fresh published news" in g for g in c["gates"])
+
+
+async def test_old_release_found_on_first_sync_does_not_force_no_trade(admin_client: httpx.AsyncClient) -> None:
+    from app.models.calendar import NewsItem
+
+    await seed_walk()
+    now = datetime.now(UTC)
+    async with get_sessionmaker()() as s:
+        s.add(
+            NewsItem(
+                uid="fed:old",
+                source="fed",
+                source_name="FRB",
+                credibility="official",
+                title="FOMC statement",
+                link=None,
+                summary=None,
+                categories=[],
+                published_at=now - timedelta(days=20),
+                detected_at=now - timedelta(minutes=1),
+                impact="CRITICAL",
+                impact_reason="FOMC policy decision",
+                instruments=["ES"],
+                cluster="fed:old",
+            )
+        )
+        await s.commit()
+    c = (await admin_client.get("/api/smc/confluence", params={"symbol": "ES"})).json()
+    assert not any("Fresh published news" in g for g in c["gates"])

@@ -37,7 +37,7 @@ export function SmcScanPanel() {
   const { data, error } = usePolling<SmcScan>("/api/smc/scan", 60_000);
   const [showWatch, setShowWatch] = useState(true);
   return (
-    <Panel title="Smart-money setup scan (all instruments)" actions={data && <span className="text-[11px] text-faint">as of {formatEt(data.as_of)} ET</span>}>
+    <Panel title="Smart-money setup scan (all instruments)" actions={data && <span className="text-[11px] text-faint">as of {formatEt(data.as_of)}</span>}>
       {error && <p className="text-xs text-down">{error}</p>}
       {!data ? <p className="text-xs text-faint">Scanning…</p> : (
         <div data-testid="smc-scan">

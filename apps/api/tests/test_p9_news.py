@@ -119,13 +119,13 @@ def test_reaction_and_bias() -> None:
     rx = reaction(bars, at)
     assert rx and rx["direction"] == "up" and rx["range_ratio"] > 1.5
     assert reaction(bars[:10], at) is None
-    n = NewsItem(impact="CRITICAL", detected_at=at, instruments=["ES"], reaction=None)
+    n = NewsItem(impact="CRITICAL", detected_at=at, published_at=at, instruments=["ES"], reaction=None)
     assert bias(n, at + timedelta(minutes=5))["bias"] == "NO TRADE"
     assert bias(n, at + timedelta(minutes=30))["bias"] == "WAIT"
     n.reaction = {"ES": rx}
     b = bias(n, at + timedelta(minutes=30), "ES")
     assert b["bias"] == "BUY" and "RESEARCH ONLY" in b["why"]
-    low = NewsItem(impact="LOW", detected_at=at, instruments=["CL"], reaction=None)
+    low = NewsItem(impact="LOW", detected_at=at, published_at=at, instruments=["CL"], reaction=None)
     assert bias(low, at)["bias"] == "WAIT"
 
 
@@ -147,3 +147,23 @@ async def test_news_api_and_chart_markers(admin_client: httpx.AsyncClient) -> No
     get_settings().news_sources = []  # no network in tests
     refreshed = await admin_client.post("/api/news/refresh", headers={"X-Requested-With": "apex"})
     assert refreshed.status_code == 200 and refreshed.json()["new"] == 0
+
+
+def test_old_items_found_on_first_sync_are_not_fresh() -> None:
+    now = datetime(2026, 11, 17, 15, 0, tzinfo=UTC)
+    old = NewsItem(
+        impact="CRITICAL",
+        detected_at=now - timedelta(minutes=1),
+        published_at=now - timedelta(days=30),
+        instruments=["ES"],
+        reaction=None,
+    )
+    assert bias(old, now)["bias"] == "WAIT"
+    new = NewsItem(
+        impact="CRITICAL",
+        detected_at=now - timedelta(minutes=1),
+        published_at=now - timedelta(minutes=3),
+        instruments=["ES"],
+        reaction=None,
+    )
+    assert bias(new, now)["bias"] == "NO TRADE"

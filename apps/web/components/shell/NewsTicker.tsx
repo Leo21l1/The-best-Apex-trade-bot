@@ -36,7 +36,7 @@ export function NewsTicker() {
     <span key={n.id} className="mr-8 inline-flex items-center gap-2 whitespace-nowrap">
       <span className={cx("rounded border px-1 font-mono text-[10px]", IMPACT[n.impact])}>{n.impact}</span>
       {n.link ? <a href={n.link} target="_blank" rel="noreferrer noopener" className="text-text hover:text-accent">{n.title}</a> : <span className="text-text">{n.title}</span>}
-      <span className="text-faint">· {n.source_name.split(" (")[0]} · published {formatEt(n.published_at, true)} ET</span>
+      <span className="text-faint">· {n.source_name.split(" (")[0]} · published {formatEt(n.published_at, true)}</span>
     </span>
   ));
   return (

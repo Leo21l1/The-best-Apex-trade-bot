@@ -155,6 +155,7 @@ async def _fresh_news(session: AsyncSession, sym: str, now: datetime) -> list[Ne
                 NewsItem.impact.in_(("HIGH", "CRITICAL")),
                 NewsItem.detected_at >= now - timedelta(minutes=15),
                 NewsItem.detected_at <= now,
+                NewsItem.published_at >= now - timedelta(hours=2),
             )
         )
     ).all()
