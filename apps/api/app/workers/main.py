@@ -120,8 +120,22 @@ async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
             async with sm() as session:
                 from sqlalchemy import select
 
+                from app.models.research import JournalTrade
+                from app.services.trade_assistant import assist
+                from app.services.trade_review import review_trade
+
                 for acct in (await session.scalars(select(PaperAccount))).all():
                     await process(session, acct, datetime.now(UTC))
+                    await assist(session, get_redis(), acct, get_settings(), datetime.now(UTC))
+                await session.commit()
+                # Journal every newly closed or imported trade automatically.
+                pending = (
+                    await session.scalars(
+                        select(JournalTrade).where(JournalTrade.review.is_(None)).order_by(JournalTrade.id).limit(10)
+                    )
+                ).all()
+                for t in pending:
+                    await review_trade(session, t, get_settings())
                 await session.commit()
         except (SQLAlchemyError, OSError):
             log.exception("lab job failed")

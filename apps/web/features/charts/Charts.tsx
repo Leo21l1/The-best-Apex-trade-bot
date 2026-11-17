@@ -1,13 +1,14 @@
 "use client";
 
-import type { Bar, GapReport, Instrument, Timeframe } from "@apex/shared-types";
+import type { Bar, ChartEvent, GapReport, Instrument, Timeframe } from "@apex/shared-types";
 import { useState } from "react";
 import { PageHeader } from "@/components/shell/PageHeader";
 import { Callout, cx, EmptyState, Panel, QualityBadge } from "@/components/ui/primitives";
 import { usePolling } from "@/hooks/usePolling";
 import { formatPrice, TIMEFRAMES } from "@/lib/candles";
 import { formatEt } from "@/lib/format";
-import { CandleChart } from "./CandleChart";
+import { CandleChart, type OverlayToggles } from "./CandleChart";
+import { NewsMarkerList, NewsPanel, OverlayToggleBar, SignalBadge, useOverlays } from "./overlayParts";
 import { useCandles } from "./useCandles";
 
 export function Charts() {
@@ -15,6 +16,9 @@ export function Charts() {
   const [tf, setTf] = useState<Timeframe>("5m");
   const [hover, setHover] = useState<Bar | null>(null);
   const [olderNote, setOlderNote] = useState<string | null>(null);
+  const [toggles, setToggles] = useState<OverlayToggles>({ ema: true, vwap: true, levels: true, signals: true, news: true });
+  const [event, setEvent] = useState<ChartEvent | null>(null);
+  const overlays = useOverlays(symbol, tf);
   const { data: instruments } = usePolling<Instrument[]>("/api/market/instruments", 3_600_000);
   const { bars, provenance, error, loading, liveAt, loadOlder } = useCandles(symbol, tf);
   const { data: gaps } = usePolling<GapReport>(`/api/market/gaps?symbol=${symbol}&hours=24`, 60_000);
@@ -97,6 +101,7 @@ export function Charts() {
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <SignalBadge label={overlays?.label} />
             <QualityBadge quality={quality} />
             <span data-testid="chart-provider">
               Provider: <span className="font-mono text-text">{provenance?.provider ?? "none"}</span>
@@ -136,9 +141,18 @@ export function Charts() {
               {!loading && (provenance?.note ?? "The ingestion worker has not stored bars for this symbol.")}
             </EmptyState>
           ) : (
-            <CandleChart bars={bars} tick={tick} daily={daily} seriesKey={`${symbol}:${tf}`} onHover={setHover} />
+            <CandleChart bars={bars} tick={tick} daily={daily} seriesKey={`${symbol}:${tf}`} onHover={setHover}
+              overlays={overlays?.symbol === symbol && overlays.timeframe === tf ? overlays : null} toggles={toggles} onEventClick={setEvent} />
           )}
         </div>
+
+        {!unavailable && bars.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <OverlayToggleBar value={toggles} onChange={setToggles} />
+            {toggles.news && <NewsMarkerList events={(overlays?.events ?? []).filter((e) => e.t >= (bars[0]?.t ?? 0))} onSelect={setEvent} />}
+          </div>
+        )}
+        {event && <NewsPanel event={event} onClose={() => setEvent(null)} />}
 
         {!unavailable && bars.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-faint">

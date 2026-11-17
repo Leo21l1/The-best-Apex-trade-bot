@@ -4,6 +4,7 @@ import { useSession } from "@/hooks/useSession";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { AlertsBell } from "./AlertsBell";
 import { Clock } from "./Clock";
+import { NextEvent, SessionPill } from "./SessionInfo";
 import { cx, QualityBadge, StatePill } from "@/components/ui/primitives";
 
 export function TopBar({
@@ -48,6 +49,8 @@ export function TopBar({
         >
           {status?.execution_mode === "ANALYSIS_ONLY" || !status ? "ANALYSIS ONLY" : status.execution_mode}
         </span>
+        <SessionPill />
+        <NextEvent />
         <span className="hidden items-center gap-1.5 sm:flex" title={market?.detail}>
           <span className="text-xs text-faint">Data</span>
           <QualityBadge quality={status?.market_data_quality ?? "unavailable"} />

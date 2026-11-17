@@ -710,6 +710,7 @@ export interface TradeStats {
   expectancy: number | null;
   max_drawdown: number;
   contracts: number;
+  low_sample?: boolean;
 }
 
 export interface JournalResponse {
@@ -743,4 +744,167 @@ export interface ManagedUser {
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;
+}
+
+// ---- Trading terminal, trade review, replay ----------------------------------------------
+
+export interface TradeLabel {
+  label: "BUY" | "SHORT" | "WAIT" | "NO TRADE";
+  reasons: string[];
+  quality: DataQuality;
+  signal: { id: number; strategy_id: string; direction: "long" | "short"; entry: number; stop: number; targets: number[]; score: number; bar_ts: string } | null;
+}
+
+export interface ChartEvent {
+  id: number;
+  t: number;
+  ts: string;
+  title: string;
+  importance: "high" | "medium" | "low";
+  category: string;
+  affected: string[];
+  source: string;
+  source_ref: string | null;
+  detected_at: string | null;
+  bias: string;
+  explanation: string;
+  affects_symbol: boolean;
+}
+
+export interface ChartSignal {
+  t: number;
+  direction: "long" | "short";
+  label: "BUY" | "SHORT";
+  strategy_id: string;
+  status: string;
+  entry: number;
+  stop: number;
+  targets: number[];
+  score: number;
+  explanation: string;
+}
+
+export interface Overlays {
+  symbol: string;
+  timeframe: Timeframe;
+  ema20: { t: number; v: number }[];
+  ema50: { t: number; v: number }[];
+  vwap: { t: number; v: number }[];
+  levels: Record<string, number>;
+  signals: ChartSignal[];
+  events: ChartEvent[];
+  label: TradeLabel;
+}
+
+export interface TradePlanOut {
+  id: number;
+  created_at: string;
+  symbol: string;
+  direction: "long" | "short";
+  entry: number | null;
+  stop: number;
+  target: number | null;
+  quantity: number;
+  strategy_id: string | null;
+  thesis: string | null;
+  signal_snapshot: TradeLabel | null;
+  risk_snapshot: (TradeCheck & { reference_price: number }) | null;
+  status: "draft" | "executed_paper" | "executed_manual" | "cancelled";
+  execution: string | null;
+}
+
+export interface LiveStatus {
+  live_trading_enabled: false;
+  reason: string;
+  manual_workflow: string[];
+}
+
+export interface CoachFinding {
+  code: string;
+  title: string;
+  evidence: string;
+  severity: "high" | "medium" | "low";
+  basis: string;
+}
+
+export interface NewsAttributionEvent {
+  title: string;
+  ts: string;
+  importance: string;
+  category: string;
+  phase: "before_entry" | "while_open" | "after_exit";
+  source: string;
+  source_ref: string | null;
+  known_before_entry: boolean;
+  reaction: null | { change: number; direction: "up" | "down" | "flat"; range_15m: number; range_ratio_vs_prior_hour: number | null; volatility_increased: boolean };
+  direction_aligned: boolean | null;
+  description: string;
+  forecast: string;
+}
+
+export interface Scenario {
+  name: string;
+  detail: string;
+  pnl: number;
+  difference_vs_actual: number;
+  hypothetical: true;
+  available_at_entry: boolean;
+}
+
+export interface TradeReview {
+  version: string;
+  generated_at: string;
+  journal: Record<"trade_summary" | "entry_analysis" | "market_conditions" | "news_context" | "risk_analysis" | "execution_review" | "outcome" | "improvement_opportunities" | "lesson", string>;
+  coaching: {
+    did_well: string[];
+    could_improve: string[];
+    supported_mistakes: CoachFinding[];
+    information_at_entry: Record<string, unknown>;
+    after_entry: string;
+    alternatives: string[];
+    next_objective: string;
+    outcome_note: string;
+  };
+  scenarios: Scenario[];
+  timeline: { ts: string; kind: "news" | "reaction" | "plan" | "signal" | "entry" | "exit"; text: string }[];
+  ai?: { text: string; model: string; generated_at: string; grounding: string };
+}
+
+export interface TradeDetail extends JournalTrade {
+  slippage: number;
+  mfe: number | null;
+  mae: number | null;
+  plan_id: number | null;
+  duration_seconds: number;
+  simulated: boolean;
+  broker_record: boolean;
+  reviewed: boolean;
+  findings: string[];
+  context: null | {
+    market: Record<string, unknown> & { available: boolean };
+    news: { events: NewsAttributionEvent[]; high_impact_near_entry: boolean; note: string };
+    signal_at_entry: Record<string, unknown> | null;
+    plan: Record<string, unknown> | null;
+    r_multiple: number | null;
+    duration_seconds: number;
+  };
+  review: TradeReview | null;
+  reviewed_at: string | null;
+}
+
+export interface ReplayData {
+  trade_id: number;
+  symbol: string;
+  provider: string;
+  bars: Bar[];
+  entry: { t: number; price: number; direction: "long" | "short" };
+  exit: { t: number; price: number };
+  stop: number | null;
+  target: number | null;
+  net_pnl: number;
+  signal_at_entry: Record<string, unknown> | null;
+  market_at_entry: Record<string, unknown> | null;
+  events: { t: number; known_from: number; title: string; importance: string; affected: string[] }[];
+  hindsight: TradeReview["coaching"] | null;
+  scenarios: Scenario[] | null;
 }

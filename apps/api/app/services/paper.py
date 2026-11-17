@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from datetime import UTC, datetime, timedelta
 
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +72,28 @@ async def process(session: AsyncSession, acct: PaperAccount, now: datetime) -> i
             book.on_bar(sym, bar)
             cursor[sym] = bar.ts.isoformat()
             processed += 1
+    # Market orders fill at the open of a bar as soon as it starts (see PaperBook.on_open).
+    try:
+        import json
+
+        from app.core.redis import get_redis
+        from app.marketdata.feed import LATEST_KEY
+
+        for sym in sorted(symbols):
+            raw = await get_redis().get(f"{LATEST_KEY}{sym}")
+            if not raw:
+                continue
+            latest = json.loads(raw)
+            ts = datetime.fromtimestamp(latest["t"], tz=UTC)
+            if latest.get("provider") != acct.provider or ts > now:
+                continue
+            before = len(book.s["fills"])
+            book.on_open(sym, ts, float(latest["o"]))
+            book.s["last_prices"][sym] = float(latest["c"])  # live mark for unrealised P&L
+            if len(book.s["fills"]) != before or book.s["positions"]:
+                processed += 1
+    except (OSError, ValueError, KeyError, RedisError):
+        pass  # Redis unavailable: the closed-bar path still fills orders
     if processed:
         acct.state = book.s
         acct.cursor = cursor
@@ -100,6 +123,8 @@ async def journal_closed(session: AsyncSession, acct: PaperAccount) -> None:
                 fees=c["fees"],
                 net_pnl=round(c["gross_pnl"] - c["fees"], 2),
                 mistakes=[],
+                slippage=c.get("slippage", 0.0),
+                plan_id=c.get("plan_id"),
             )
             .on_conflict_do_nothing(index_elements=["source_key"])
         )

@@ -142,6 +142,7 @@ class PaperBook:
             "role": "entry",
             "oco": None,
             "avg_fill_price": None,
+            "plan_id": req.get("plan_id"),
         }
         try:
             self._validate(order, req, now)
@@ -271,6 +272,7 @@ class PaperBook:
                     px = (max(trig, bar.open) if s == 1 else min(trig, bar.open)) + s * slip
             if px is None:
                 continue
+            ref = bar.open if o["type"] == "market" else o["price"]
             qty = min(o["qty"] - o["filled_qty"], cap)
             if o["role"] != "entry":
                 qty = min(qty, abs(self.position(symbol)["qty"]))  # exits never reverse the position
@@ -278,14 +280,43 @@ class PaperBook:
                     o["status"] = "cancelled"
                     continue
             cap -= qty
-            self._fill(o, bar.ts, round(round(px / tick) * tick, 6), qty)
+            self._fill(o, bar.ts, round(round(px / tick) * tick, 6), qty, ref if o["type"] != "limit" else None)
             if cap <= 0:
                 break
         self.s["last_prices"][symbol] = bar.close
         self._risk_checks(symbol, bar)
 
-    def _fill(self, o: dict[str, Any], ts: datetime, px: float, qty: int) -> None:
+    def on_open(self, symbol: str, ts: datetime, open_price: float) -> None:
+        """Fill eligible MARKET orders at the open of a bar that has just started.
+
+        A bar's open is final as soon as the bar begins, so market orders need not wait for the bar to
+        close. Limit and stop orders still wait for the closed bar (its high/low are not yet known).
+        No liquidity cap is applied here because the bar's volume is not yet known.
+        """
+        last = self.s["last_bar_ts"].get(symbol)
+        if last is not None and ts.isoformat() <= last:
+            return
+        self._roll_day(ts)
+        tick = float(INSTRUMENTS[symbol].tick_size)
+        slip = self.cfg.slippage_ticks * tick
+        for o in list(self.s["orders"]):
+            if (
+                o["symbol"] != symbol
+                or o["type"] != "market"
+                or o["role"] != "entry"
+                or o["status"] not in ("working", "partially_filled")
+                or ts.isoformat() <= o["created_at"]
+            ):
+                continue
+            s = 1 if o["side"] == "buy" else -1
+            px = round(round((open_price + s * slip) / tick) * tick, 6)
+            self._fill(o, ts, px, o["qty"] - o["filled_qty"], open_price)
+        self.s["last_prices"][symbol] = open_price
+
+    def _fill(self, o: dict[str, Any], ts: datetime, px: float, qty: int, ref: float | None = None) -> None:
         symbol = o["symbol"]
+        pv = float(INSTRUMENTS[symbol].point_value)
+        slippage = round(abs(px - ref) * pv * qty, 2) if ref is not None else 0.0
         s = 1 if o["side"] == "buy" else -1
         commission = self._commission(symbol, qty)
         prev_avg = o["avg_fill_price"] or 0.0
@@ -301,10 +332,14 @@ class PaperBook:
                 "qty": qty,
                 "price": px,
                 "commission": commission,
+                "slippage": slippage,
             }
         )
         self.s["balance"] -= commission
-        self._apply(symbol, s * qty, px, ts, commission)
+        plan_id = o.get("plan_id") or next(
+            (p.get("plan_id") for p in self.s["orders"] if p["id"] == o.get("parent_id")), None
+        )
+        self._apply(symbol, s * qty, px, ts, commission, slippage, plan_id)
         if o["role"] == "entry":
             for child in self.s["orders"]:
                 if child["parent_id"] == o["id"] and child["status"] in ("pending", "working"):
@@ -320,7 +355,16 @@ class PaperBook:
                         sib["qty"] = max(sib["filled_qty"], sib["qty"] - qty)
         self._event(ts, f"Filled {o['side']} {qty} {symbol} @ {px} (order {o['id']})")
 
-    def _apply(self, symbol: str, signed_qty: int, px: float, ts: datetime, commission: float) -> None:
+    def _apply(
+        self,
+        symbol: str,
+        signed_qty: int,
+        px: float,
+        ts: datetime,
+        commission: float,
+        slippage: float = 0.0,
+        plan_id: Any = None,
+    ) -> None:
         pos = self.position(symbol)
         pv = float(INSTRUMENTS[symbol].point_value)
         q, avg = pos["qty"], pos["avg_price"]
@@ -330,6 +374,8 @@ class PaperBook:
                 "qty": new_q,
                 "avg_price": round((avg * abs(q) + px * abs(signed_qty)) / abs(new_q), 6),
                 "opened_at": pos["opened_at"] or ts.isoformat(),
+                "entry_slippage": round(pos.get("entry_slippage", 0.0) + slippage, 2),
+                "plan_id": pos.get("plan_id") or plan_id,
             }
         else:
             closing = min(abs(q), abs(signed_qty))
@@ -349,15 +395,28 @@ class PaperBook:
                     "gross_pnl": round(gross, 2),
                     # Entry commission was charged on the opening fill; attribute both sides to the round trip.
                     "fees": round(self._commission(symbol, closing) * 2, 2),
+                    # Slippage is already inside the fill prices; reported separately for review.
+                    "slippage": round(pos.get("entry_slippage", 0.0) * closing / abs(q) + slippage, 2),
+                    "plan_id": pos.get("plan_id") or plan_id,
                 }
             )
             remaining = q + signed_qty
             if remaining == 0:
                 pos = {"qty": 0, "avg_price": 0.0, "opened_at": None}
             elif (remaining > 0) == (q > 0):
-                pos = {"qty": remaining, "avg_price": avg, "opened_at": pos["opened_at"]}
+                pos = {
+                    **pos,
+                    "qty": remaining,
+                    "entry_slippage": round(pos.get("entry_slippage", 0.0) * remaining / abs(q), 2),
+                }
             else:  # reversed through zero
-                pos = {"qty": remaining, "avg_price": px, "opened_at": ts.isoformat()}
+                pos = {
+                    "qty": remaining,
+                    "avg_price": px,
+                    "opened_at": ts.isoformat(),
+                    "entry_slippage": 0.0,
+                    "plan_id": plan_id,
+                }
         if pos["qty"] == 0:
             self.s["positions"].pop(symbol, None)
         else:

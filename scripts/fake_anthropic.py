@@ -39,6 +39,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self.path.startswith("/v1/messages") or key != "e2e-test-key":
             self._send(401, {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}})
             return
+        if not body.get("tools"):  # trade-coaching request (no tools): answer from the supplied record
+            record = json.loads(body["messages"][-1]["content"])
+            t = record["trade"]
+            text = (f"**What went well**\n- Trade #{t['id']} on {t['symbol']} had a recorded stop at {t['planned_stop']}.\n\n"
+                    f"**What to improve**\n- Net result {t['net_pnl']:+.2f} is reviewed against the plan, not judged alone.\n\n"
+                    "**Next learning objective**\n- Keep recording plans before entry.")
+            self._send(200, message([{"type": "text", "text": text}], "end_turn"))
+            return
         last = body["messages"][-1]["content"]
         results = [b for b in last if isinstance(b, dict) and b.get("type") == "tool_result"] if isinstance(last, list) else []
         if not results:

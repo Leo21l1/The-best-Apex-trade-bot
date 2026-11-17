@@ -252,6 +252,7 @@ def stats(trades: Sequence[JournalTrade]) -> dict[str, Any]:
         "expectancy": round(sum(pnl) / n, 2) if n else None,
         "max_drawdown": round(dd, 2),
         "contracts": sum(t.quantity for t in trades),
+        "low_sample": n < 30,
     }
 
 

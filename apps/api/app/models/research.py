@@ -79,3 +79,38 @@ class JournalTrade(Base):
     followed_plan: Mapped[bool | None]
     mistakes: Mapped[list[str]] = mapped_column(JSONB, default=list)
     notes: Mapped[str | None] = mapped_column(Text)
+    #: Slippage in dollars (already reflected in the fill prices; reported separately).
+    slippage: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    #: Maximum favourable / adverse excursion in dollars while open (from stored 1-minute bars).
+    mfe: Mapped[float | None] = mapped_column(Float)
+    mae: Mapped[float | None] = mapped_column(Float)
+    plan_id: Mapped[int | None] = mapped_column(ForeignKey("trade_plans.id", ondelete="SET NULL"), index=True)
+    #: Market context, signal and news attribution at the time of the trade (computed, not AI).
+    context: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: Generated journal, coaching findings and hypothetical scenarios.
+    review: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TradePlan(Base):
+    """A trade idea written down before execution (paper, or manual in Tradovate)."""
+
+    __tablename__ = "trade_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    symbol: Mapped[str] = mapped_column(String(16))
+    direction: Mapped[str] = mapped_column(String(8))
+    entry: Mapped[float | None] = mapped_column(Float)
+    stop: Mapped[float] = mapped_column(Float)
+    target: Mapped[float | None] = mapped_column(Float)
+    quantity: Mapped[int] = mapped_column(Integer)
+    strategy_id: Mapped[str | None] = mapped_column(String(32))
+    thesis: Mapped[str | None] = mapped_column(Text)
+    #: BUY / SHORT / WAIT label, strategy signal and market context captured when the plan was made.
+    signal_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    risk_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: draft | executed_paper | executed_manual | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    execution: Mapped[str | None] = mapped_column(String(20))

@@ -17,6 +17,7 @@ log = logging.getLogger("apex.alerts")
 ALERT_CHANNEL = "apex:alerts"
 ALERT_KINDS = {
     "opportunity_detected",
+    "trade_assistant",
     "setup_invalidated",
     "regime_changed",
     "data_feed",

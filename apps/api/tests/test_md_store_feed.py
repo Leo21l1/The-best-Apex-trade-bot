@@ -200,11 +200,17 @@ async def test_handle_dedupes_validates_persists_and_publishes() -> None:
     assert await _count() == 1
     assert svc.status["invalid_dropped"] == 2 and svc._dupes.dropped == 1
 
+    own = {int((T0 + timedelta(minutes=m)).timestamp()) for m in (27, 28, 29, 30)}
     wire = []
-    for _ in range(5):
+    for _ in range(20):
         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
+        if not msg:
+            break
         if msg:
-            wire.append(json.loads(msg["data"]))
+            w = json.loads(msg["data"])
+            # Pub/Sub channels span Redis DB numbers, so ignore traffic from any other running feed.
+            if w["t"] in own:
+                wire.append(w)
     await pubsub.aclose()
     assert [(w["symbol"], w["closed"], w["quality"]) for w in wire] == [
         ("ES", True, "simulated"),

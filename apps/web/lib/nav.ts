@@ -17,7 +17,9 @@ export const NAV: NavItem[] = [
   { href: "/opportunities", label: "Opportunity Leaderboard", key: "l", group: "Markets", phase: 3,
     summary: "Explainable, evidence-ranked setups. May legitimately be empty." },
   { href: "/charts", label: "Advanced Charts", key: "c", group: "Markets", phase: 2,
-    summary: "Candles and volume on nine timeframes, each labelled with provider and data class." },
+    summary: "Candles, EMA/VWAP, levels, strategy signals and news markers, labelled with data class." },
+  { href: "/terminal", label: "Trading Terminal", key: "t", group: "Markets", phase: 8,
+    summary: "Chart, order ticket, risk preview and paper execution. Live Apex orders stay disabled." },
   { href: "/copilot", label: "AI Copilot", key: "i", group: "Markets", phase: 5,
     summary: "Ask questions answered from verified application data via controlled tools." },
   { href: "/account", label: "Apex Account Health", key: "a", group: "Account", phase: 4,
@@ -26,14 +28,16 @@ export const NAV: NavItem[] = [
     summary: "Deterministic position sizing and per-trade rule checks." },
   { href: "/journal", label: "Trading Journal", key: "j", group: "Account", phase: 6,
     summary: "Imported trades, planned vs actual execution, rule adherence." },
-  { href: "/performance", label: "Performance Analytics", key: "p", group: "Account", phase: 6,
-    summary: "Daily, weekly and monthly statistics with recurring-mistake detection." },
+  { href: "/trade", label: "Trade Review & Replay", key: "v", group: "Account", phase: 8,
+    summary: "Automatic journal, coaching, news timeline, hypothetical scenarios and candle-by-candle replay." },
+  { href: "/performance", label: "My Trading Performance", key: "p", group: "Account", phase: 6,
+    summary: "Results by period, strategy, instrument, time of day and news, with sample sizes and rule adherence." },
   { href: "/strategies", label: "Strategy Laboratory", key: "s", group: "Research", phase: 3,
     summary: "Strategy specifications, validation status and eligibility." },
   { href: "/backtesting", label: "Backtesting", key: "b", group: "Research", phase: 6,
     summary: "Event-driven backtests, walk-forward and Monte Carlo analysis." },
-  { href: "/paper", label: "Paper Trading", key: "m", group: "Research", phase: 6,
-    summary: "Isolated order simulator for practising and checking strategy behaviour." },
+  { href: "/paper", label: "Paper Simulator", key: "m", group: "Research", phase: 6,
+    summary: "Raw view of the isolated order simulator (orders, fills, activity)." },
   { href: "/calendar", label: "Economic Calendar", key: "e", group: "Research", phase: 5,
     summary: "CPI, FOMC, NFP and other events with configurable alert windows." },
   { href: "/settings", label: "Settings & Integrations", key: ",", group: "System", phase: 1,
@@ -43,7 +47,7 @@ export const NAV: NavItem[] = [
 ];
 
 /** Pages whose phase is at or below this are implemented. */
-export const COMPLETED_PHASE = 6;
+export const COMPLETED_PHASE = 8;
 
 export const NAV_GROUPS = ["Markets", "Account", "Research", "System"] as const;
 

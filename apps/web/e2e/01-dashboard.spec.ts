@@ -84,8 +84,8 @@ test.describe.serial("dashboard workflows", () => {
       ["/copilot", "AI Copilot"],
       ["/account", "Apex Account Health"], ["/risk", "Risk Guardian"],
       ["/strategies", "Strategy Laboratory"], ["/backtesting", "Backtesting"],
-      ["/journal", "Trading Journal"], ["/performance", "Performance Analytics"],
-      ["/calendar", "Economic Calendar"], ["/settings", "Settings & Integrations"], ["/paper", "Paper Trading"],
+      ["/journal", "Trading Journal"], ["/performance", "My Trading Performance"],
+      ["/calendar", "Economic Calendar"], ["/settings", "Settings & Integrations"], ["/paper", "Paper Simulator"], ["/terminal", "Trading Terminal"], ["/trade", "Trade Review & Replay"],
       ["/system", "System Health"],
     ];
     for (const [path, heading] of pages) {

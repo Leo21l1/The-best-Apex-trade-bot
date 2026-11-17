@@ -14,10 +14,10 @@ function Table({ rows, label }: { rows: (TradeStats & { key: string })[]; label:
   return (
     <div className="-mx-4 overflow-x-auto">
       <table className="w-full min-w-[460px] text-xs">
-        <thead><tr className="text-left text-faint">{[label, "Trades", "Net", "Win", "PF", "Expectancy", "Max DD"].map((h) => <th key={h} className="px-2 py-1 font-medium first:pl-4">{h}</th>)}</tr></thead>
+        <thead><tr className="text-left text-faint">{[label, "n", "Net", "Win", "PF", "Expectancy", "Max DD"].map((h) => <th key={h} className="px-2 py-1 font-medium first:pl-4">{h}</th>)}</tr></thead>
         <tbody className="font-mono">{rows.map((r) => (
           <tr key={r.key} className="border-t border-line/60">
-            <td className="py-1 pr-2 pl-4 font-sans">{r.key}</td><td className="px-2">{r.trades}</td>
+            <td className="py-1 pr-2 pl-4 font-sans">{r.key}</td><td className={cx("px-2", r.trades < 30 && "text-warn")} title={r.trades < 30 ? "Small sample: uncertain" : undefined}>{r.trades}</td>
             <td className={cx("px-2", r.net_pnl >= 0 ? "text-up" : "text-down")}>{money(r.net_pnl, true)}</td>
             <td className="px-2">{pct(r.win_rate)}</td><td className="px-2">{r.profit_factor?.toFixed(2) ?? "—"}</td>
             <td className="px-2">{money(r.expectancy)}</td><td className="px-2">{money(r.max_drawdown)}</td>
@@ -31,24 +31,36 @@ function Table({ rows, label }: { rows: (TradeStats & { key: string })[]; label:
 export function Performance() {
   const [period, setPeriod] = useState<"day" | "week" | "month">("day");
   const [days, setDays] = useState(90);
-  const { data: a } = usePolling<AnalyticsResponse>(`/api/analytics?period=${period}&days=${days}`, 60_000);
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const range = start ? `&start=${start}${end ? `&end=${end}` : ""}` : "";
+  const { data: a } = usePolling<AnalyticsResponse & {
+    by_news: (TradeStats & { key: string })[];
+    average_planned_rr: { value: number | null; trades_with_plan: number };
+    rule_adherence: { trades_with_stop: number; exits_beyond_stop: number; stop_respected_rate: number | null; self_reported_followed_rate: number | null };
+    common_findings: { code: string; title: string; count: number; net_pnl: number }[];
+    sample_size_note: string | null;
+  }>(`/api/analytics?period=${period}&days=${days}${range}`, 60_000);
   const sel = "rounded border border-line bg-panel-2 px-2 py-1 text-xs";
   return (
     <>
       <PageHeader path="/performance">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <select aria-label="Report period" className={sel} value={period} onChange={(e) => setPeriod(e.target.value as typeof period)}>
             <option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option>
           </select>
           <select aria-label="Window" className={sel} value={days} onChange={(e) => setDays(Number(e.target.value))}>
             <option value={30}>30 days</option><option value={90}>90 days</option><option value={365}>1 year</option><option value={3650}>All</option>
           </select>
+          <input type="date" aria-label="From date" className={sel} value={start} onChange={(e) => setStart(e.target.value)} />
+          <input type="date" aria-label="To date" className={sel} value={end} onChange={(e) => setEnd(e.target.value)} />
         </div>
       </PageHeader>
       {!a ? <p className="text-sm text-faint">Loading…</p> : a.overall.trades === 0 ? (
         <Panel><EmptyState title="No journal trades in this window">Import trades on the Trading Journal page, or close some paper trades.</EmptyState></Panel>
       ) : (
         <div className="space-y-4" data-testid="performance">
+          {a.sample_size_note && <Callout tone="warn" title="Small sample">{a.sample_size_note}</Callout>}
           <Panel>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
               <Stat label="Trades" value={a.overall.trades} />
@@ -64,6 +76,21 @@ export function Performance() {
             <Panel title="By strategy"><Table rows={a.by_strategy} label="Strategy" /></Panel>
             <Panel title="By instrument"><Table rows={a.by_symbol} label="Symbol" /></Panel>
             <Panel title="By entry hour (ET)"><Table rows={a.by_hour_et} label="Hour" /></Panel>
+            <Panel title="Around news events"><Table rows={a.by_news} label="News proximity" /></Panel>
+            <Panel title="Rule adherence and planning">
+              <dl className="grid grid-cols-2 gap-y-1 text-sm" data-testid="adherence">
+                <dt className="text-muted">Average planned reward:risk</dt><dd className="font-mono">{a.average_planned_rr.value ?? "—"} <span className="text-faint">({a.average_planned_rr.trades_with_plan} trades)</span></dd>
+                <dt className="text-muted">Stop respected</dt><dd className="font-mono">{pct(a.rule_adherence.stop_respected_rate)} <span className="text-faint">({a.rule_adherence.trades_with_stop} with a stop)</span></dd>
+                <dt className="text-muted">Exits beyond stop</dt><dd className="font-mono">{a.rule_adherence.exits_beyond_stop}</dd>
+                <dt className="text-muted">Self-reported plan followed</dt><dd className="font-mono">{pct(a.rule_adherence.self_reported_followed_rate)}</dd>
+              </dl>
+              <p className="mt-3 text-xs font-medium text-muted uppercase">Most common execution findings</p>
+              {a.common_findings.length === 0 ? <p className="text-sm text-faint">None yet.</p> : (
+                <ul className="text-sm" data-testid="common-findings">{a.common_findings.slice(0, 6).map((f) => (
+                  <li key={f.code} className="flex justify-between"><span>{f.title}</span><span className="font-mono text-muted">{f.count}× · {money(f.net_pnl, true)}</span></li>
+                ))}</ul>
+              )}
+            </Panel>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
             <Panel title="Recurring mistakes">

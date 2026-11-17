@@ -12,10 +12,10 @@ describe("backoffDelay", () => {
 });
 
 describe("navigation", () => {
-  it("exposes the 14 required dashboard pages plus Paper Trading, with unique routes and shortcuts", () => {
-    expect(NAV).toHaveLength(15);
-    expect(new Set(NAV.map((n) => n.href)).size).toBe(15);
-    expect(new Set(NAV.map((n) => n.key)).size).toBe(15);
+  it("exposes the dashboard pages with unique routes and shortcuts", () => {
+    expect(NAV).toHaveLength(17);
+    expect(new Set(NAV.map((n) => n.href)).size).toBe(17);
+    expect(new Set(NAV.map((n) => n.key)).size).toBe(17);
     expect(navByKey("y")?.href).toBe("/system");
   });
   it("filters by label and summary", () => {

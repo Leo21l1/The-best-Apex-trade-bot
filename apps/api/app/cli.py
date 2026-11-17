@@ -48,7 +48,8 @@ async def reset_db() -> int:
     async with get_engine().begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE backtest_runs, paper_accounts, journal_trades, copilot_exchanges, economic_events, "
+                "TRUNCATE backtest_runs, paper_accounts, journal_trades, trade_plans, copilot_exchanges, "
+                "economic_events, "
                 "account_snapshots, rules, alerts, signals, "
                 "candles, audit_logs, users "
                 "RESTART IDENTITY CASCADE"

@@ -29,6 +29,7 @@ log = logging.getLogger("apex.feed")
 
 STATUS_KEY = "apex:md:status"
 CANDLE_CHANNEL = "apex:md:candles"
+LATEST_KEY = "apex:md:latest:"
 STATUS_TTL_S = 120
 BACKFILL_CHUNK = timedelta(hours=24)
 
@@ -164,7 +165,11 @@ class IngestionService:
                 await s.commit()
         self.status["last_event"][candle.symbol] = candle.ts.isoformat()
         try:
-            await self._redis.publish(CANDLE_CHANNEL, json.dumps(candle_to_wire(candle)))
+            wire = json.dumps(candle_to_wire(candle))
+            await self._redis.publish(CANDLE_CHANNEL, wire)
+            # Latest update per symbol (forming or closed): lets the paper simulator fill market
+            # orders at a new bar's open without waiting for the bar to close.
+            await self._redis.set(f"{LATEST_KEY}{candle.symbol}", wire, ex=180)
         except (RedisError, OSError):
             log_event(log, "publish failed", level=logging.WARNING)
         await self._write_status()

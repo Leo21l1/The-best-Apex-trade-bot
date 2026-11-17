@@ -28,3 +28,24 @@ WebSocket client.
 Tradovate read-only access may be added only when officially documented, authorised for the
 account, and technically verified. Until then: manual balance entry, position updates and CSV
 trade import (Phase 4).
+
+## Trading terminal (added later)
+
+The Trading Terminal has BUY/SELL controls that submit to the **paper simulator only**. Its
+"Live order (Tradovate)" button is permanently disabled and explains why
+(`GET /api/execution/live-status` returns `live_trading_enabled: false`). The status is a constant
+in code, not a setting.
+
+Live trading stays disabled because no documentation was found showing that Apex and Tradovate
+authorise third-party automated order entry for this evaluation account. An API connection alone
+does not grant that permission. Re-enabling would need a separate, independently reviewed broker
+adapter, and the code-scan tests here would fail the build if a Tradovate order endpoint appeared.
+
+The manual workflow is:
+
+1. Write a trade plan in the terminal.
+2. Place the order yourself in Tradovate.
+3. Mark the plan as executed manually.
+4. Import the Tradovate CSV (or enter the trade) so it is journaled and reviewed.
+
+The real-time trade assistant raises advisory alerts only; it never changes stops, targets or positions.

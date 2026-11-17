@@ -294,6 +294,15 @@ def _trade_out(t: JournalTrade) -> dict[str, Any]:
         "followed_plan": t.followed_plan,
         "mistakes": t.mistakes or [],
         "notes": t.notes,
+        "slippage": t.slippage,
+        "mfe": t.mfe,
+        "mae": t.mae,
+        "plan_id": t.plan_id,
+        "duration_seconds": (t.exit_time - t.entry_time).total_seconds(),
+        "simulated": t.source == "paper",
+        "broker_record": t.source == "csv",
+        "reviewed": t.review is not None,
+        "findings": [f["code"] for f in ((t.review or {}).get("coaching") or {}).get("supported_mistakes", [])],
     }
 
 
@@ -419,9 +428,13 @@ async def analytics(
     period: Literal["day", "week", "month"] = "day",
     days: Annotated[int, Query(ge=1, le=3650)] = 90,
     source: str | None = None,
+    start: date | None = None,
+    end: date | None = None,
 ) -> dict[str, Any]:
-    since = datetime.now(UTC).date() - timedelta(days=days)
+    since = start or (datetime.now(UTC).date() - timedelta(days=days))
     q = select(JournalTrade).where(JournalTrade.trading_date >= since)
+    if end:
+        q = q.where(JournalTrade.trading_date <= end)
     if source:
         q = q.where(JournalTrade.source == source)
     trades = (await session.scalars(q.order_by(JournalTrade.exit_time))).all()
@@ -459,9 +472,62 @@ async def analytics(
             s.calendar_post_event_minutes,
         ),
         "rules_verified": rules.verified,
+        "by_news": grouped(trades, _news_bucket),
+        "average_planned_rr": _avg_rr(trades),
+        "rule_adherence": _adherence(trades),
+        "common_findings": _common_findings(trades),
+        "sample_size_note": None
+        if len(trades) >= 30
+        else f"Only {len(trades)} trades: treat every percentage here as highly uncertain.",
         "notes": [
             "Statistics describe past trades only. Small samples are flagged rather than interpreted.",
             "Rule checks use the configured rule values" + ("" if rules.verified else ", which are UNVERIFIED") + ".",
             "PROJECT APEX never changes strategy parameters automatically.",
         ],
     }
+
+
+def _news_bucket(t: JournalTrade) -> str:
+    news = (t.context or {}).get("news") or {}
+    if news.get("high_impact_near_entry"):
+        return "high-impact event within 1h of entry"
+    if any(e["phase"] == "while_open" for e in news.get("events", [])):
+        return "event while open"
+    return "no recorded event" if t.context else "not yet reviewed"
+
+
+def _avg_rr(trades: list[JournalTrade]) -> dict[str, Any]:
+    rrs = [
+        abs(t.planned_target - t.entry_price) / abs(t.entry_price - t.planned_stop)
+        for t in trades
+        if t.planned_stop and t.planned_target and t.planned_stop != t.entry_price
+    ]
+    return {"value": round(sum(rrs) / len(rrs), 2) if rrs else None, "trades_with_plan": len(rrs)}
+
+
+def _adherence(trades: list[JournalTrade]) -> dict[str, Any]:
+    with_stop = [t for t in trades if t.planned_stop]
+    beyond = [
+        t
+        for t in with_stop
+        if "beyond_stop" in [f["code"] for f in ((t.review or {}).get("coaching") or {}).get("supported_mistakes", [])]
+    ]
+    marked = [t for t in trades if t.followed_plan is not None]
+    return {
+        "trades_with_stop": len(with_stop),
+        "exits_beyond_stop": len(beyond),
+        "stop_respected_rate": round(1 - len(beyond) / len(with_stop), 3) if with_stop else None,
+        "self_reported_followed_rate": round(sum(1 for t in marked if t.followed_plan) / len(marked), 3)
+        if marked
+        else None,
+    }
+
+
+def _common_findings(trades: list[JournalTrade]) -> list[dict[str, Any]]:
+    counts: dict[str, dict[str, Any]] = {}
+    for t in trades:
+        for f in ((t.review or {}).get("coaching") or {}).get("supported_mistakes", []):
+            c = counts.setdefault(f["code"], {"code": f["code"], "title": f["title"], "count": 0, "net_pnl": 0.0})
+            c["count"] += 1
+            c["net_pnl"] = round(c["net_pnl"] + t.net_pnl, 2)
+    return sorted(counts.values(), key=lambda c: -c["count"])

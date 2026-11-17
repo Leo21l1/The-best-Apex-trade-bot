@@ -30,7 +30,13 @@ def test_market_order_fills_next_bar_open_with_slippage_and_commission() -> None
     assert o["status"] == "working"
     b.on_bar("ES", bar(1, 5001, 5002, 5000, 5001.5))
     assert o["status"] == "filled" and o["avg_fill_price"] == 5001.25  # open + 1 tick
-    assert b.position("ES") == {"qty": 2, "avg_price": 5001.25, "opened_at": (T0 + timedelta(minutes=1)).isoformat()}
+    assert b.position("ES") == {
+        "qty": 2,
+        "avg_price": 5001.25,
+        "opened_at": (T0 + timedelta(minutes=1)).isoformat(),
+        "entry_slippage": 25.0,
+        "plan_id": None,
+    }  # 1 tick x $12.50 x 2
     assert b.s["balance"] == 50000 - 5.0  # 2 x $2.50
     assert b.unrealized() == pytest.approx((5001.5 - 5001.25) * 2 * 50)
 
@@ -172,3 +178,43 @@ def test_paper_module_has_no_network_or_broker_access() -> None:
     src = (Path(__file__).resolve().parents[1] / "app" / "paper" / "engine.py").read_text()
     for banned in ("httpx", "requests", "aiohttp", "websocket", "socket", "urllib", "tradovate", "anthropic"):
         assert banned not in src.lower().replace("no network access", ""), banned
+
+
+def test_market_order_fills_at_new_bar_open_without_waiting_for_close() -> None:
+    b = book()
+    o = b.submit(
+        {
+            "symbol": "ES",
+            "side": "buy",
+            "type": "market",
+            "qty": 1,
+            "plan_id": 7,
+            "stop_loss": 4990.0,
+            "take_profit": 5020.0,
+        },
+        SUBMIT,
+    )
+    b.on_open("ES", T0, 5000.0)  # bar opened before submission: not eligible
+    assert o["status"] == "working"
+    b.on_open("ES", T0 + timedelta(minutes=1), 5001.0)
+    assert o["status"] == "filled" and o["avg_fill_price"] == 5001.25
+    assert b.s["fills"][-1]["slippage"] == 12.5
+    # The closed bar later drives the bracket; children are eligible on that same bar.
+    b.on_bar("ES", bar(1, 5001, 5020.5, 5000, 5019))
+    assert b.position("ES")["qty"] == 0
+    closed = b.s["closed"][-1]
+    assert closed["plan_id"] == 7 and closed["exit_price"] == 5020.0
+    assert closed["slippage"] == 12.5  # entry slippage only; the target is a limit fill
+    assert closed["gross_pnl"] == (5020.0 - 5001.25) * 50 and closed["fees"] == 5.0
+
+
+def test_partial_close_prorates_entry_slippage() -> None:
+    b = book()
+    b.submit({"symbol": "ES", "side": "buy", "type": "market", "qty": 4}, SUBMIT)
+    b.on_bar("ES", bar(1, 5000, 5001, 4999, 5000))  # entry slippage 4 x 12.5 = 50
+    b.submit(
+        {"symbol": "ES", "side": "sell", "type": "limit", "qty": 1, "price": 5005.0},
+        T0 + timedelta(minutes=1, seconds=10),
+    )
+    b.on_bar("ES", bar(2, 5004, 5006, 5003, 5005))
+    assert b.s["closed"][-1]["slippage"] == 12.5 and b.position("ES")["entry_slippage"] == 37.5

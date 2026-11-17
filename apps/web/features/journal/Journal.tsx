@@ -54,7 +54,7 @@ export function Journal() {
             ) : (
               <div className="-mx-4 overflow-x-auto">
                 <table className="w-full min-w-[760px] text-xs" data-testid="journal-table">
-                  <thead><tr className="text-left text-faint">{["Exit (ET)", "Symbol", "Side", "Qty", "Entry", "Exit", "Net", "Strategy", "Plan", "Mistakes", "Src"].map((h) => <th key={h} className="px-2 py-1.5 font-medium first:pl-4">{h}</th>)}</tr></thead>
+                  <thead><tr className="text-left text-faint">{["Exit (ET)", "Symbol", "Side", "Qty", "Entry", "Exit", "Net", "Strategy", "Plan", "Mistakes", "Src", ""].map((h) => <th key={h} className="px-2 py-1.5 font-medium first:pl-4">{h}</th>)}</tr></thead>
                   <tbody>
                     {data.trades.map((t) => (
                       <TradeRow key={t.id} t={t} tags={data.mistake_tags} open={open === t.id} onToggle={() => setOpen(open === t.id ? null : t.id)} onSaved={load} />
@@ -99,11 +99,12 @@ function TradeRow({ t, tags, open, onToggle, onSaved }: { t: JournalTrade; tags:
         <td className="px-2 font-sans text-muted">{t.strategy_id ?? "—"}</td>
         <td className="px-2 font-sans">{t.followed_plan == null ? "—" : t.followed_plan ? "✓" : "✗"}</td>
         <td className="px-2 font-sans text-warn">{t.mistakes.join(", ")}</td>
-        <td className="px-2 font-sans text-faint">{t.source}</td>
+        <td className="px-2 font-sans text-faint">{t.source === "paper" ? "paper (sim)" : t.source}</td>
+        <td className="px-2"><a href={`/trade?id=${t.id}`} onClick={(e) => e.stopPropagation()} className="font-sans text-accent hover:underline" data-testid={`review-${t.id}`}>Review</a></td>
       </tr>
       {open && (
         <tr className="border-t border-line/60 bg-panel-2/30">
-          <td colSpan={11} className="px-4 py-3">
+          <td colSpan={12} className="px-4 py-3">
             <div className="grid gap-3 lg:grid-cols-4">
               <label className="text-xs text-muted">Strategy
                 <select aria-label="Trade strategy" className={input} value={edit.strategy_id} onChange={(e) => setEdit({ ...edit, strategy_id: e.target.value })}>

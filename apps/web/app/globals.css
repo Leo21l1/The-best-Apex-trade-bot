@@ -10,11 +10,11 @@
   --text: #e6e8eb;
   --muted: #8b939e;
   --faint: #5c636d;
-  --accent: #5b9cf5;
-  --up: #3fb68b;
-  --down: #e5575b;
+  --accent: #38bdf8;
+  --up: #34d399;
+  --down: #f05a5e;
   --warn: #e3a33b;
-  --info: #5b9cf5;
+  --info: #38bdf8;
 }
 
 @theme inline {
@@ -52,4 +52,22 @@ body {
 
 ::selection {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+@keyframes slidein {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Panels ease in once; nothing loops or flashes. Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: no-preference) {
+  main section { animation: fadein 0.25s ease-out both; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

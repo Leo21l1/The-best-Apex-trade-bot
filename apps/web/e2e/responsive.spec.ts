@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const PAGES = ["/", "/radar", "/opportunities", "/charts", "/copilot", "/account", "/risk", "/journal",
-  "/performance", "/strategies", "/backtesting", "/paper", "/calendar", "/settings", "/system"];
+  "/performance", "/strategies", "/backtesting", "/paper", "/terminal", "/trade", "/calendar", "/settings", "/system"];
 
 test("mobile: every page fits the screen width and the drawer navigates", async ({ page }) => {
   test.setTimeout(120_000);
