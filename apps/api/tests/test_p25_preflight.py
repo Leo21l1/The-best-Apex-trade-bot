@@ -82,3 +82,84 @@ async def test_preflight_calendar_freshness_uses_last_successful_download() -> N
         await s.commit()
         stale = by(await run_preflight(s, ["ES"], now))["News calendar"]
     assert stale["result"] == "FAIL" and stale["detail"].startswith("STALE") and "429" in stale["detail"]
+
+
+async def _bars(sym: str, prices: list[float], vols: list[int], provider: str = "databento") -> None:
+    from decimal import Decimal
+
+    from app.models.candle import CandleRow
+
+    t0 = datetime(2026, 11, 18, 14, 30, tzinfo=UTC)
+    async with get_sessionmaker()() as s:
+        for i, (p, v) in enumerate(zip(prices, vols, strict=True)):
+            d = Decimal(str(p))
+            s.add(
+                CandleRow(
+                    provider=provider,
+                    symbol=sym,
+                    ts=t0 + timedelta(minutes=i),
+                    open=d,
+                    high=d + 1,
+                    low=d - 1,
+                    close=d,
+                    volume=v,
+                    quality="live",
+                )
+            )
+        await s.commit()
+
+
+FEED = {
+    "symbols": ["ES", "NQ", "MNQ"],
+    "contracts": {
+        "NQ": {"contract": "NQZ6", "instrument_id": 42005347},
+        "MNQ": {"contract": "MNQZ6", "instrument_id": 42004823},
+    },
+    "last_event": {"MNQ": "2026-11-18T15:19:00+00:00"},
+}
+
+
+async def test_mnq_identical_prices_to_nq_are_legitimate() -> None:
+    from app.services.preflight import _symbol_spec
+
+    px = [21000 + i * 0.25 for i in range(40)]
+    await _bars("NQ", px, [500 + i for i in range(40)])
+    await _bars("MNQ", px, [3000 + 7 * i for i in range(40)])  # same index, same prices, own volume
+    async with get_sessionmaker()() as s:
+        r = await _symbol_spec(s, "databento", "MNQ", "MNQZ6", FEED)
+        unmapped = await _symbol_spec(s, "databento", "MNQ", None, {"symbols": ["MNQ"], "contracts": {}})
+    assert r["result"] == "PASS", r
+    assert unmapped["result"] == "WARN" and "has not reported" in unmapped["detail"]
+    assert "tick 0.25 = $0.50, point $2" in r["detail"] and "instrument_id 42004823" in r["detail"]
+
+
+async def test_mnq_copied_records_or_shared_instrument_fail() -> None:
+    from app.services.preflight import _symbol_spec
+
+    px = [21000 + i * 0.25 for i in range(40)]
+    vol = [500 + i for i in range(40)]
+    await _bars("NQ", px, vol)
+    await _bars("MNQ", px, vol)  # prices AND volumes identical on every bar: copied NQ records
+    async with get_sessionmaker()() as s:
+        copied = await _symbol_spec(s, "databento", "MNQ", "MNQZ6", FEED)
+        assert copied["result"] == "FAIL" and "copied" in copied["detail"]
+        shared = {
+            **FEED,
+            "contracts": {
+                "NQ": {"contract": "NQZ6", "instrument_id": 1},
+                "MNQ": {"contract": "MNQZ6", "instrument_id": 1},
+            },
+        }
+        r = await _symbol_spec(s, "databento", "MNQ", "MNQZ6", shared)
+        assert r["result"] == "FAIL" and "same as NQ" in r["detail"]
+        wrong = await _symbol_spec(s, "databento", "MNQ", "NQZ6", FEED)
+        assert wrong["result"] == "FAIL" and "is not a MNQ contract" in wrong["detail"]
+
+
+def test_mnq_unavailable_states_the_actual_cause() -> None:
+    from app.services.preflight import unavailable_cause
+
+    assert "add it to APEX_MARKET_DATA_SYMBOLS" in unavailable_cause("MNQ", "databento", {"symbols": ["ES", "NQ"]})
+    c = unavailable_cause("MNQ", "databento", {"symbols": ["MNQ"], "contracts": {}, "provider_last_error": "403"})
+    assert "has not mapped MNQ.v.0" in c and "403" in c
+    assert "no market-data provider" in unavailable_cause("MNQ", "none", {})

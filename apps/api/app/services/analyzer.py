@@ -276,8 +276,7 @@ def _data_status(symbol: str, m1: Sequence[Bar], feed: dict[str, Any], provider:
         "feed_state": feed.get("state"),
         "note": None
         if last
-        else f"No stored bars for {symbol} from provider '{provider}'. Prices are never derived from another "
-        "instrument.",
+        else f"DATA UNAVAILABLE: {_cause(symbol, provider, feed)}. Prices are never derived from another instrument.",
     }
 
 
@@ -1177,3 +1176,9 @@ def card(doc: dict[str, Any]) -> dict[str, Any]:
 def _last_conf(doc: dict[str, Any]) -> str | None:
     rec = (doc.get("signal") or {}).get("recorded")
     return rec.get("confirmed_at_et") if rec else None
+
+
+def _cause(symbol: str, provider: str, feed: dict[str, Any]) -> str:
+    from app.services.preflight import unavailable_cause
+
+    return unavailable_cause(symbol, provider, feed)

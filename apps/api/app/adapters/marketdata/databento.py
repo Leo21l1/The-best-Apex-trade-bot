@@ -414,6 +414,7 @@ class DatabentoProvider(MarketDataProvider):
                         by_id[int(rec.instrument_id)] = root
                         self.contract_map[root] = {
                             "contract": str(rec.stype_out_symbol),
+                            "instrument_id": int(rec.instrument_id),
                             "rule": self.continuous(root),
                             "since": datetime.now(UTC).isoformat(),
                         }

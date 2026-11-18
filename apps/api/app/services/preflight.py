@@ -82,14 +82,12 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
         mk = market_status(sym, now)
         contract = ((feed.get("contracts") or {}).get(sym) or {}).get("contract")
         if row is None:
-            fs = feed.get("symbols") or []
-            hint = (
-                ""
-                if not fs or sym in fs
-                else f" - {sym} is not in the feed's symbols; add it to APEX_MARKET_DATA_SYMBOLS"
-            )
             out.append(
-                _line(f"{sym} data", "FAIL", f"no stored bars from '{prov}'{hint} (never derived from another symbol)")
+                _line(
+                    f"{sym} data",
+                    "FAIL",
+                    f"DATA UNAVAILABLE: {unavailable_cause(sym, prov, feed)} (never derived from another symbol)",
+                )
             )
             continue
         age = (now - (row[0] + timedelta(minutes=1))).total_seconds()
@@ -249,36 +247,111 @@ EXPECTED_SPEC = {
 }
 
 
+_CONTRACT_RE = r"^{root}[FGHJKMNQUVXZ]\d{{1,2}}$"
+
+
+def unavailable_cause(sym: str, prov: str, feed: dict[str, Any]) -> str:
+    """The actual reason an instrument has no data (never filled from another instrument)."""
+    if prov == "none":
+        return "no market-data provider is configured (APEX_MARKET_DATA_PROVIDER)"
+    fs = feed.get("symbols") or []
+    if fs and sym not in fs:
+        return f"{sym} is not in the feed's symbols: add it to APEX_MARKET_DATA_SYMBOLS and restart the worker"
+    if not feed:
+        return "the worker's live feed is not reporting (is the worker running?)"
+    parts = []
+    if prov == "databento" and sym not in (feed.get("contracts") or {}):
+        parts.append(
+            f"the Databento live feed has not mapped {sym}.v.0 to a contract (check that your Databento "
+            "subscription/entitlement covers it)"
+        )
+    err = feed.get("provider_last_error") or feed.get("last_error")
+    if err:
+        parts.append(f"last feed error: {err}")
+    return "; ".join(parts) or f"no {sym} bars stored from '{prov}' yet"
+
+
 async def _symbol_spec(
     session: AsyncSession, prov: str, sym: str, contract: str | None, feed: dict[str, Any]
 ) -> dict[str, str]:
-    """Contract specification, actual front-month contract, and a check that prices are not copied from a sibling."""
+    """Contract specification and proof that the bars come from this instrument's own feed.
+
+    Equal prices across related contracts (MNQ/NQ, MES/ES) are legitimate - they track the same index -
+    and are never a failure. Instead this verifies: the instrument's own Databento instrument_id and raw
+    contract symbol (distinct from its sibling's), the front-month mapping against the quarterly
+    calendar, the provider/data class of the stored bars, and bar timing.
+    """
+    import re
+
     from app.marketdata.instruments import INSTRUMENTS
+    from app.research.rollover import front_contract
 
     inst = INSTRUMENTS.get(sym)
     if inst is None:
         return _line(f"{sym} contract", "FAIL", "unknown instrument")
     tick, tv, pv = float(inst.tick_size), float(inst.tick_value), float(inst.point_value)
+    problems: list[str] = []
+    notes: list[str] = []
     exp = EXPECTED_SPEC.get(sym)
-    problems = []
     if exp and (tick, tv, pv) != exp:
         problems.append(f"spec {tick}/{tv}/{pv} differs from expected {exp}")
-    if contract and not (contract.startswith(sym) and len(contract) <= len(sym) + 3):
-        problems.append(f"feed contract {contract} does not belong to {sym}")
+    cmap = feed.get("contracts") or {}
+    mine = cmap.get(sym) or {}
+    iid = mine.get("instrument_id")
+    if contract and not re.match(_CONTRACT_RE.format(root=re.escape(sym)), contract):
+        problems.append(f"feed contract {contract} is not a {sym} contract")
+    if inst.sibling and mine:
+        sib = cmap.get(inst.sibling) or {}
+        if iid is not None and iid == sib.get("instrument_id"):
+            problems.append(f"instrument_id {iid} is the same as {inst.sibling}'s: bars would not be {sym}'s own")
+        if contract and contract == sib.get("contract"):
+            problems.append(f"contract {contract} is the same as {inst.sibling}'s")
+    if contract and re.match(_CONTRACT_RE.format(root=re.escape(sym)), contract):
+        cal = front_contract(sym, datetime.now(UTC).astimezone(ET).date())
+        if contract != cal:
+            # Volume-based rolls (roll rule "v") can lead the calendar by a few days: informative only.
+            notes.append(f"calendar front month would be {cal} (volume roll may differ near expiry)")
+    # Stored bars: own provider and data class; flag only a true copy (prices AND volumes identical).
+    row = (
+        await session.execute(
+            text(
+                "SELECT count(*), count(*) FILTER (WHERE quality = 'simulated') FROM "
+                "(SELECT quality FROM candles WHERE provider=:p AND symbol=:s ORDER BY ts DESC LIMIT 120) x"
+            ),
+            {"p": prov, "s": sym},
+        )
+    ).first()
+    if prov == "databento" and row and row[1]:
+        problems.append(f"{row[1]} of the last {row[0]} stored bars are labelled simulated under provider databento")
     if inst.sibling:
         same = (
             await session.execute(
                 text(
-                    "SELECT count(*), count(*) FILTER (WHERE a.close = b.close AND a.high = b.high AND a.low = b.low) "
-                    "FROM (SELECT ts, close, high, low FROM candles WHERE provider=:p AND symbol=:s "
+                    "SELECT count(*), count(*) FILTER (WHERE a.close = b.close AND a.high = b.high AND a.low = b.low "
+                    "AND a.open = b.open AND a.volume = b.volume) "
+                    "FROM (SELECT ts, open, high, low, close, volume FROM candles WHERE provider=:p AND symbol=:s "
                     "ORDER BY ts DESC LIMIT 120) a JOIN candles b ON b.provider=:p AND b.symbol=:o AND b.ts=a.ts"
                 ),
                 {"p": prov, "s": sym, "o": inst.sibling},
             )
         ).first()
         if same and same[0] >= 30 and same[1] == same[0]:
-            problems.append(f"last {same[0]} bars are identical to {inst.sibling}: prices look derived, not real")
-    desc = f"tick {tick} = ${tv:.2f}, point ${pv:g}; contract {contract or 'not reported by the feed'}"
+            problems.append(
+                f"the last {same[0]} bars match {inst.sibling} in price AND volume: these look like copied "
+                f"{inst.sibling} records, not {sym}'s own feed (equal prices alone would be normal)"
+            )
+    last_event = (feed.get("last_event") or {}).get(sym)
+    desc = (
+        f"tick {tick} = ${tv:.2f}, point ${pv:g}; contract {contract or 'not reported by the feed'}"
+        + (f", instrument_id {iid}" if iid is not None else "")
+        + (f"; last live bar {last_event}" if last_event else "")
+        + (f"; {'; '.join(notes)}" if notes else "")
+    )
     if problems:
         return _line(f"{sym} contract", "FAIL", "; ".join(problems) + f" ({desc})")
-    return _line(f"{sym} contract", "PASS" if contract or prov != "databento" else "WARN", desc)
+    ok = prov != "databento" or (contract and iid is not None)
+    return _line(
+        f"{sym} contract",
+        "PASS" if ok else "WARN",
+        desc + ("" if ok else "; the live feed has not reported this instrument's own instrument_id/contract yet"),
+    )
