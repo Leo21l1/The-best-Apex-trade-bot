@@ -46,6 +46,34 @@ async def stored_sessions(session: AsyncSession, provider: str, symbol: str, sin
     return {r[0]: int(r[1]) for r in rows}
 
 
+async def stored_session_counts(
+    session: AsyncSession, provider: str, symbol: str, since: datetime
+) -> dict[date, tuple[int, int]]:
+    """Trade date -> (all stored 1-minute bars, bars inside 09:30-16:00 ET)."""
+    rows = await session.execute(
+        text(
+            "SELECT (date_trunc('day', (ts AT TIME ZONE 'America/New_York') + interval '6 hours'))::date AS d, "
+            "count(*), count(*) FILTER (WHERE (ts AT TIME ZONE 'America/New_York')::time >= time '09:30' "
+            "AND (ts AT TIME ZONE 'America/New_York')::time < time '16:00') "
+            "FROM candles WHERE provider = :p AND symbol = :s AND ts >= :since GROUP BY d ORDER BY d"
+        ),
+        {"p": provider, "s": symbol, "since": since},
+    )
+    return {r[0]: (int(r[1]), int(r[2])) for r in rows}
+
+
+def session_complete(symbol: str, d: date, counts: tuple[int, int] | None) -> bool:
+    """Same definition as the study's 'usable session': enough bars overall AND in regular hours.
+
+    (Counting only total bars let a session with a full overnight but a broken regular session look
+    complete to the backfill - so it was never repaired - while the study rejected it.)"""
+    from app.research.data_audit import required_rth_bars
+
+    total, rth = counts or (0, 0)
+    need = required_rth_bars(symbol, d)
+    return total >= MIN_BARS_PER_SESSION and (need == 0 or rth >= need)
+
+
 def expected_sessions(symbol: str, end: date, count: int) -> list[date]:
     """The last ``count`` exchange trade dates on or before ``end`` (holidays excluded)."""
     out: list[date] = []
@@ -72,9 +100,9 @@ async def coverage(
     today = trading_day(now)
     expected = expected_sessions(symbol, today - timedelta(days=1), target)  # completed sessions only
     since = datetime.combine(expected[0] - timedelta(days=1), datetime.min.time(), UTC) if expected else now
-    stored = await stored_sessions(session, provider, symbol, since)
-    full = [d for d in expected if stored.get(d, 0) >= MIN_BARS_PER_SESSION]
-    missing = [d for d in expected if stored.get(d, 0) < MIN_BARS_PER_SESSION]
+    stored = await stored_session_counts(session, provider, symbol, since)
+    full = [d for d in expected if session_complete(symbol, d, stored.get(d))]
+    missing = [d for d in expected if not session_complete(symbol, d, stored.get(d))]
     bounds = await session.execute(
         text("SELECT min(ts), max(ts), count(*) FROM candles WHERE provider = :p AND symbol = :s"),
         {"p": provider, "s": symbol},
@@ -106,8 +134,9 @@ async def coverage(
         else "limited"
         if (total or 0) >= 1000
         else "insufficient",
-        "rule": f"A session counts when it has >= {MIN_BARS_PER_SESSION} stored 1-minute bars; sessions follow the "
-        "CME calendar for this instrument (holidays excluded).",
+        "rule": f"A session counts when it has >= {MIN_BARS_PER_SESSION} stored 1-minute bars and >= 300 "
+        "regular-hours bars (scaled down on early-close days); sessions follow the CME "
+        "calendar for this instrument (holidays excluded).",
     }
 
 
@@ -156,6 +185,7 @@ async def estimate(
     target: int = TARGET_SESSIONS,
     progress: Any = None,
     provider: Any = None,
+    include_partial: bool = False,
 ) -> dict[str, Any]:
     """Missing sessions per symbol and the provider's cost estimate. Nothing is downloaded.
 
@@ -175,7 +205,7 @@ async def estimate(
     try:
         for sym in symbols:
             cov = await coverage(session, sym, target=target)
-            done = await already_fetched(s.market_data_provider, sym)
+            done = set() if include_partial else await already_fetched(s.market_data_provider, sym)
             missing = [date.fromisoformat(x) for x in cov.get("missing_sessions", []) if x not in done]
             cost: float | None = 0.0
             note = None
@@ -322,9 +352,11 @@ async def run_job_step(session: AsyncSession, provider: Any, max_sessions: int =
         cov = await coverage(session, sym, target=job["target"])
         fetched = await already_fetched(s.market_data_provider, sym)
         prog = job["progress"].setdefault(sym, {"fetched_sessions": 0, "bars": 0})
-        todo = [d for d in cov.get("missing_sessions", []) if d not in fetched]
         if plan is not None:
-            todo = [d for d in todo if d in set(plan.get(sym, []))]  # never beyond what was approved
+            # The approved plan is the authority: only those sessions, and only while still incomplete.
+            todo = [d for d in cov.get("missing_sessions", []) if d in set(plan.get(sym, []))]
+        else:
+            todo = [d for d in cov.get("missing_sessions", []) if d not in fetched]
         for ds in todo:
             if done >= max_sessions:
                 break
@@ -362,9 +394,11 @@ async def run_job_step(session: AsyncSession, provider: Any, max_sessions: int =
         cov = await coverage(session, sym, target=job["target"])
         fetched = await already_fetched(s.market_data_provider, sym)
         attempted = job["progress"].get(sym, {}).get("attempted", [])
-        left = [d for d in cov.get("missing_sessions", []) if d not in attempted and d not in fetched]
+        left = [d for d in cov.get("missing_sessions", []) if d not in attempted]
         if plan is not None:
             left = [d for d in left if d in set(plan.get(sym, []))]
+        else:
+            left = [d for d in left if d not in fetched]
         job["progress"].setdefault(sym, {})["remaining"] = len(left)
         job["progress"][sym]["sessions_stored"] = cov.get("sessions_stored")
         remaining += len(left)
@@ -373,6 +407,61 @@ async def run_job_step(session: AsyncSession, provider: Any, max_sessions: int =
         job["finished_at"] = datetime.now(UTC).isoformat()
     await _save_job(job)
     return done > 0
+
+
+async def explain_missing(
+    session: AsyncSession, symbol: str, target: int = TARGET_SESSIONS, now: datetime | None = None
+) -> list[dict[str, Any]]:
+    """Why each expected (CME calendar) session in the target window is not complete.
+
+    Uses only local facts - the calendar, stored bar counts, the download record and the last
+    backfill job's errors - so it costs nothing and needs no provider request."""
+    from app.marketdata.calendar import ET, trading_day
+    from app.research.data_audit import required_rth_bars
+
+    s = get_settings()
+    now = now or datetime.now(UTC)
+    expected = expected_sessions(symbol, trading_day(now) - timedelta(days=1), target)
+    if not expected:
+        return []
+    since = datetime.combine(expected[0] - timedelta(days=1), datetime.min.time(), UTC)
+    counts = await stored_session_counts(session, s.market_data_provider, symbol, since)
+    fetched = await already_fetched(s.market_data_provider, symbol)
+    job = await get_job() or {}
+    attempted = set((job.get("progress", {}).get(symbol) or {}).get("attempted", []))
+    errors = {e.split(":", 1)[0].split(" ", 1)[1]: e for e in job.get("errors", []) if e.startswith(f"{symbol} ")}
+    out = []
+    for d in expected:
+        c = counts.get(d)
+        if session_complete(symbol, d, c):
+            continue
+        total, rth = c or (0, 0)
+        b = session_bounds(symbol, d)
+        ds = d.isoformat()
+        if ds in errors:
+            reason = f"download failed: {errors[ds].split(': ', 1)[-1][:200]}"
+        elif ds in fetched:
+            reason = f"downloaded, but the provider returned only {rth} regular-hours bars ({total} in total)"
+        elif ds in attempted:
+            reason = "download started but not completed (interrupted); not retried automatically"
+        elif total:
+            reason = f"partially stored ({rth} regular-hours / {total} bars, e.g. from the live stream); not backfilled"
+        else:
+            reason = "not downloaded yet"
+        out.append(
+            {
+                "date": ds,
+                "weekday": d.strftime("%a"),
+                "session_et": [b[0].astimezone(ET).strftime("%m-%d %H:%M"), b[1].astimezone(ET).strftime("%m-%d %H:%M")]
+                if b
+                else None,
+                "bars": total,
+                "rth_bars": rth,
+                "rth_required": required_rth_bars(symbol, d),
+                "reason": reason,
+            }
+        )
+    return out
 
 
 async def strategy_statistics(

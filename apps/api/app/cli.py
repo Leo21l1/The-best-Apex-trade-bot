@@ -263,6 +263,22 @@ async def data_audit_cmd(symbols: list[str], days: int) -> int:
         d = audit_bars(sym, bars, start, now, prov)
         _print_audit(d)
         print(f"   usable sessions: {d.get('usable_session_dates')}")
+        if d.get("quarterly_roll_dates_in_range"):
+            print(
+                f"   quarterly roll dates in range (unadjusted continuous prices jump here): "
+                f"{d['quarterly_roll_dates_in_range']}"
+            )
+        from app.services.history import explain_missing
+
+        async with get_sessionmaker()() as session:
+            why = await explain_missing(session, sym, target=max(25, d.get("sessions", 0)))
+        if why:
+            print("   incomplete expected sessions (CME calendar):")
+            for w in why:
+                print(
+                    f"     {w['date']} {w['weekday']} {w['session_et']}: {w['rth_bars']}/{w['rth_required']} "
+                    f"regular-hours bars - {w['reason']}"
+                )
     if len(symbols) >= 2:
         for i in range(1, len(symbols)):
             print(
@@ -305,7 +321,13 @@ async def rr_study_cmd(symbol: str, days: int, strategies: list[str], out: str |
         f"{sp.get('out_of_sample_days', 0)} out-of-sample sessions ({sp.get('out_of_sample_bars', 0)} bars); "
         f"costs {res['costs']}"
     )
-    print(f"\n{'strategy':18} {'config':10} {'signals':>7} {'IS tr':>5} {'OOS tr':>6} {'OOS exp $':>10}  verdict")
+    c = res["costs"]
+    print(
+        "\nOOS $/trade = average NET P&L per out-of-sample trade in USD, 1 contract, after commission "
+        f"(${c['commission_per_side']:g}/side) and slippage ({c['slippage_ticks_per_side']:g} tick "
+        "on entry, stop and time exits; none on limit targets)."
+    )
+    print(f"{'strategy':18} {'config':10} {'signals':>7} {'IS tr':>5} {'OOS tr':>6} {'OOS $/trade':>11}  verdict")
     for r in res["rows"]:
         if "error" in r:
             print(f"{r['strategy_id']:18} {r['config']:10} error: {r['error']}")
@@ -313,7 +335,7 @@ async def rr_study_cmd(symbol: str, days: int, strategies: list[str], out: str |
         o, f = r["out_of_sample"], r.get("funnel", {})
         print(
             f"{r['strategy_id']:18} {r['config']:10} {f.get('signals', 0):>7} {r['in_sample'].get('trades') or 0:>5} "
-            f"{o.get('trades') or 0:>6} {o.get('expectancy') or 0:>10}  {r['verdict']}"
+            f"{o.get('trades') or 0:>6} {o.get('expectancy') or 0:>11}  {r['verdict']}"
         )
     print("\n== signal funnel per strategy (exit at T1, every signal):")
     for r in res["rows"]:
@@ -331,7 +353,13 @@ async def rr_study_cmd(symbol: str, days: int, strategies: list[str], out: str |
     return 0
 
 
-async def backfill_cmd(symbols: list[str], sessions: int, approve_cost: float | None, accept_unknown: bool) -> int:
+async def backfill_cmd(
+    symbols: list[str],
+    sessions: int,
+    approve_cost: float | None,
+    accept_unknown: bool,
+    include_partial: bool = False,
+) -> int:
     """Estimate (default) or start an approved historical backfill. Never downloads without approval,
     and never starts when the cost estimate failed."""
     from app.adapters.marketdata.base import ProviderAuthError, ProviderError
@@ -349,7 +377,9 @@ async def backfill_cmd(symbols: list[str], sessions: int, approve_cost: float | 
     )
     try:
         async with get_sessionmaker()() as session:
-            est = await history.estimate(session, symbols, sessions, progress=lambda m: print(m, flush=True))
+            est = await history.estimate(
+                session, symbols, sessions, progress=lambda m: print(m, flush=True), include_partial=include_partial
+            )
     except ProviderAuthError as exc:
         print(f"ESTIMATE FAILED: {exc}\nCheck APEX_DATABENTO_API_KEY and your Databento entitlements. Nothing started.")
         return 3
@@ -419,6 +449,11 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--sessions", type=int, default=25)
     bf.add_argument("--approve-cost", type=float, default=None)
     bf.add_argument("--accept-unknown-cost", action="store_true")
+    bf.add_argument(
+        "--include-partial",
+        action="store_true",
+        help="Also re-request sessions downloaded before that are still incomplete (shown in the estimate)",
+    )
     rr = sub.add_parser("rr-study", help="Compare reward:risk configurations out of sample on stored bars")
     rr.add_argument("--symbol", default="ES")
     rr.add_argument("--days", type=int, default=60)
@@ -445,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.sessions,
                     args.approve_cost,
                     args.accept_unknown_cost,
+                    args.include_partial,
                 )
             if args.cmd == "rr-study":
                 syms = [x.strip() for x in args.strategies.split(",") if x.strip()]
