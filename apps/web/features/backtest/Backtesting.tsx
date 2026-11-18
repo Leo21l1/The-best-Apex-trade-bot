@@ -24,7 +24,7 @@ export function Backtesting() {
   const { data: strategies } = usePolling<StrategiesResponse>("/api/strategies", 300_000);
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selected, setSelected] = useState<BacktestRun | null>(null);
-  const [form, setForm] = useState({ strategy_id: "vwap_trend", symbol: "ES", start: isoDay(-30), end: isoDay(1), slippage_ticks: "1", target_r: "", stop_atr: "", quantity: "1", commission: "" });
+  const [form, setForm] = useState({ strategy_id: "vwap_trend", symbol: "ES", start: isoDay(-30), end: isoDay(1), slippage_ticks: "1", target_r: "", stop_atr: "", quantity: "1", commission: "", min_net_rr: "", exit_target: "1" });
   const [compare, setCompare] = useState<number[]>([]);
   const { data: coverage } = usePolling<{ bars: number; sessions: number; first: string | null; last: string | null; enough: boolean; provider: string; note: string | null }>(
     `/api/backtests/coverage?symbol=${form.symbol}&start=${form.start}T00:00:00Z&end=${form.end}T00:00:00Z`, 60_000);
@@ -75,6 +75,7 @@ export function Backtesting() {
           slippage_ticks: Number(form.slippage_ticks), target_r: form.target_r ? Number(form.target_r) : null,
           stop_atr: form.stop_atr ? Number(form.stop_atr) : null, quantity: Number(form.quantity) || 1,
           commission_per_side: form.commission ? Number(form.commission) : null,
+          min_net_rr: form.min_net_rr ? Number(form.min_net_rr) : null, exit_target: Number(form.exit_target),
         },
       });
       setSelected(run);
@@ -119,6 +120,8 @@ export function Backtesting() {
                 <label className="text-xs text-muted">Target R (blank = spec)<input aria-label="Target R" className={input} value={form.target_r} onChange={(e) => setForm({ ...form, target_r: e.target.value })} /></label>
                 <label className="text-xs text-muted">Stop × ATR (blank = spec)<input aria-label="Stop ATR multiple" className={input} value={form.stop_atr} onChange={(e) => setForm({ ...form, stop_atr: e.target.value })} /></label>
                 <label className="text-xs text-muted">Contracts<input aria-label="Contracts" className={input} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} /></label>
+                <label className="text-xs text-muted">Exit at<select aria-label="Exit target" className={input} value={form.exit_target} onChange={(e) => setForm({ ...form, exit_target: e.target.value })}><option value="1">Target 1</option><option value="2">Target 2</option></select></label>
+                <label className="text-xs text-muted">Min net R:R (blank = all signals)<input aria-label="Minimum net reward to risk" className={input} value={form.min_net_rr} onChange={(e) => setForm({ ...form, min_net_rr: e.target.value })} /></label>
                 <label className="col-span-2 text-xs text-muted">Commission $/side (blank = settings)<input aria-label="Commission per side" className={input} value={form.commission} onChange={(e) => setForm({ ...form, commission: e.target.value })} /></label>
               </div>
               {coverage && (

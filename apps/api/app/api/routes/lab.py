@@ -52,6 +52,9 @@ class BacktestIn(BaseModel):
     slippage_ticks: float | None = Field(default=None, ge=0, le=20)
     target_r: float | None = Field(default=None, gt=0.2, le=10)
     stop_atr: float | None = Field(default=None, gt=0.1, le=10)
+    #: Skip signals whose net R:R to the exit target is below this (confirmation cost model).
+    min_net_rr: float | None = Field(default=None, ge=0.5, le=5)
+    exit_target: Literal[1, 2] = 1
 
     @field_validator("start", "end")
     @classmethod
@@ -121,6 +124,8 @@ async def create_backtest(body: BacktestIn, user: AdminUser, request: Request, s
         slippage_ticks=body.slippage_ticks if body.slippage_ticks is not None else s.cost_slippage_ticks_per_side,
         target_r=(body.target_r, body.target_r + 1) if body.target_r else None,
         stop_atr=body.stop_atr,
+        min_net_rr=body.min_net_rr,
+        exit_target=body.exit_target,
     )
     run = BacktestRun(
         status="queued",

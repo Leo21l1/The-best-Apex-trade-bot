@@ -68,7 +68,7 @@ class ChecklistConfig:
     lunch: tuple[time, time] = (time(11, 30), time(13, 30))
     lunch_exception_rvol: float = 1.3
     lunch_exception_volatility: float = 1.1
-    min_rr: float = 1.2
+    min_rr: float = 1.5  # net R:R to T1; set from APEX_MIN_NET_REWARD_RISK
     commission_per_side: dict[str, float] = field(default_factory=lambda: {"standard": 2.5, "micro": 0.6})
     slippage_ticks_per_side: float = 1.0
     session: SessionConfig = field(default_factory=SessionConfig)
@@ -132,7 +132,15 @@ def confirmed_vwap_crosses(bars5: Sequence[Bar], tick: float, buffer_atr: float)
 def reward_risk(
     symbol: str, direction: str, entry: float, stop: float, target: float, cfg: ChecklistConfig, qty: int = 1
 ) -> dict[str, Any]:
-    """Net reward:risk per the instrument's point value, round-trip commission and slippage."""
+    """Net reward:risk for one target, with costs charged the way trades are filled.
+
+    Same execution policy as the backtester and paper simulator:
+    * entry is a market order: commission + ``slippage_ticks_per_side`` adverse slippage;
+    * a stop exit is a market order: commission + slippage again;
+    * a target exit is a limit order: commission, no slippage.
+    So the net reward (target reached) pays commission round trip + entry slippage, and the net risk
+    (stop reached) pays commission round trip + entry and stop slippage. Net R:R = net reward / net risk.
+    """
     inst = INSTRUMENTS[symbol]
     pv, tick = float(inst.point_value), float(inst.tick_size)
     s = 1 if direction == "long" else -1
@@ -141,21 +149,30 @@ def reward_risk(
     if (target - entry) * s <= 0:
         return {"valid": False, "reason": "Target is not on the profitable side of the entry."}
     comm = cfg.commission_per_side["micro" if inst.is_micro else "standard"] * 2 * qty
-    slip = cfg.slippage_ticks_per_side * 2 * tick * pv * qty
+    slip_side = cfg.slippage_ticks_per_side * tick * pv * qty
     gross_reward = abs(target - entry) * pv * qty
     gross_risk = abs(entry - stop) * pv * qty
-    reward, risk = gross_reward - comm - slip, gross_risk + comm + slip
+    reward_costs = comm + slip_side  # commission round trip + entry slippage (limit exit)
+    risk_costs = comm + 2 * slip_side  # commission round trip + entry and stop slippage
+    reward, risk = gross_reward - reward_costs, gross_risk + risk_costs
     return {
         "valid": True,
         "point_value": pv,
         "gross_reward": round(gross_reward, 2),
         "gross_risk": round(gross_risk, 2),
-        "costs": round(comm + slip, 2),
+        "reward_costs": round(reward_costs, 2),
+        "costs": round(risk_costs, 2),  # cost if stopped out (the Risk Guardian's loss-after-costs basis)
         "net_reward": round(reward, 2),
         "net_risk": round(risk, 2),
         "ratio": round(reward / risk, 2) if risk > 0 else None,
         "gross_ratio": round(gross_reward / gross_risk, 2),
+        "method": "net R:R = (reward - commission - entry slippage) / (risk + commission + entry and stop slippage)",
     }
+
+
+def rr_label(min_rr: float) -> str:
+    """One name for the condition everywhere (checklist, confirmation, copilot)."""
+    return f"Net R:R to T1 >= {min_rr:g}:1"
 
 
 # --- evaluate -----------------------------------------------------------------------------------
@@ -379,31 +396,32 @@ def evaluate(
         )
     )
 
-    # G. Reward:risk
+    # G. Net reward:risk to T1
     rr = None
+    label = rr_label(cfg.min_rr)
     if setup and setup.get("stop") is not None and setup.get("targets"):
         rr = reward_risk(
             symbol, setup["direction"], float(setup["entry"]), float(setup["stop"]), float(setup["targets"][0]), cfg
         )
         if not rr["valid"]:
-            items.append(item("reward_risk", "Risk-to-Reward >= 1.2:1", FAIL, rr["reason"], rr))
+            items.append(item("reward_risk", label, FAIL, rr["reason"], rr))
         else:
             items.append(
                 item(
                     "reward_risk",
-                    "Risk-to-Reward >= 1.2:1",
+                    label,
                     PASS if rr["ratio"] >= cfg.min_rr else FAIL,
-                    f"Net {rr['ratio']}:1 (gross {rr['gross_ratio']}:1) after ${rr['costs']} costs; "
-                    f"minimum {cfg.min_rr}:1.",
+                    f"Net {rr['ratio']}:1 to T1 (gross {rr['gross_ratio']}:1); ${rr['reward_costs']} costs if the "
+                    f"target fills, ${rr['costs']} if stopped. Minimum {cfg.min_rr:g}:1.",
                     rr,
-                    "(|target-entry| x point value - costs) / (|entry-stop| x point value + costs)",
+                    rr["method"],
                 )
             )
     else:
         items.append(
             item(
                 "reward_risk",
-                "Risk-to-Reward >= 1.2:1",
+                label,
                 UNKNOWN,
                 "No setup with a justified stop and target; levels are not invented.",
             )

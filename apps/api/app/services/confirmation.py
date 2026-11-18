@@ -47,7 +47,7 @@ CONDITIONS: tuple[tuple[str, str], ...] = (
     ("volatility", "Volatility"),
     ("session", "New York session quality"),
     ("news", "News"),
-    ("reward_risk", "Risk-to-reward"),
+    ("reward_risk", "Net R:R to T1"),
     ("risk", "Apex risk eligibility"),
     ("data", "Data freshness"),
     ("invalidation", "Invalidation"),
@@ -90,7 +90,6 @@ ZONE_TYPES = {
     "short": ("bearish_order_block", "supply_zone", "bearish_fvg"),
 }
 EXPIRY_BARS = 3  # a signal is actionable for 3 bars of its timeframe (5m) after the trigger bar closed
-MIN_RR = 1.5
 
 
 def mandatory_for(strategy_id: str | None) -> frozenset[str]:
@@ -545,14 +544,30 @@ def decide(
         if not rr["valid"]:
             conds.append(_c("reward_risk", FAIL, rr["reason"], rr))
         else:
-            ok = rr["ratio"] is not None and rr["ratio"] >= MIN_RR
+            ok = rr["ratio"] is not None and rr["ratio"] >= cfg.min_rr
+            t2 = f" T2: net {rr2['ratio']}:1 (gross {rr2['gross_ratio']}:1)." if rr2 and rr2.get("valid") else " No T2."
+            reason = (
+                f"T1: net {rr['ratio']}:1 (gross {rr['gross_ratio']}:1); ${rr['reward_costs']} costs if the target "
+                f"fills, ${rr['costs']} if stopped.{t2} Minimum net {cfg.min_rr:g}:1 to T1."
+            )
+            if not ok and rr["gross_ratio"] < cfg.min_rr:
+                # Costs always lower the ratio, so a target placed below the minimum BEFORE costs can never pass.
+                reason += (
+                    f" This setup places T1 at {rr['gross_ratio']}R before costs, so it cannot reach "
+                    f"{cfg.min_rr:g}:1 net under any fill: the strategy's target design and the minimum disagree."
+                )
             conds.append(
                 _c(
                     "reward_risk",
                     PASS if ok else FAIL,
-                    f"Net {rr['ratio']}:1 to T1 after ${rr['costs']} costs "
-                    f"and slippage per contract; minimum {MIN_RR}:1.",
-                    rr,
+                    reason,
+                    {
+                        "t1": rr,
+                        "t2": rr2 if rr2 and rr2.get("valid") else None,
+                        "min_net_rr": cfg.min_rr,
+                        "can_reach_minimum": rr["gross_ratio"] >= cfg.min_rr,
+                    },
+                    confirm=None,
                 )
             )
         slip = cfg.slippage_ticks_per_side * tick
@@ -577,10 +592,15 @@ def decide(
             "point_value": pv,
             "tick_size": tick,
             "costs_per_contract": rr.get("costs"),
+            "costs_if_target": rr.get("reward_costs"),
+            "gross_rr_t1": rr.get("gross_ratio"),
+            "gross_rr_t2": rr2.get("gross_ratio") if rr2 and rr2.get("valid") else None,
+            "min_net_rr": cfg.min_rr,
             "invalidation_price": stop,
             "expires_at": expiry.isoformat() if expiry else None,
-            "basis": "Signal levels from the strategy's market-structure rules, rounded to the tick; loss and reward "
-            "include round-trip commission and slippage.",
+            "basis": "Signal levels from the strategy's rules, rounded to the tick. Loss at the stop includes "
+            "commission and entry + stop slippage; reward at a target includes commission and entry slippage "
+            "(targets are limit orders), the same fill policy as the backtester.",
         }
     else:
         conds.append(_c("reward_risk", UNKNOWN, "No setup with a structural stop and target; levels are not invented."))
@@ -833,7 +853,23 @@ async def confirmation(
     crosses = ((rd.get("checklist") or {}).get("regime") or {}).get("vwap_crosses_today")
     regime = regime_profile(bars, now, a5.trend if a5 else None, recent_choch, crosses, rvol) if bars else None
     hist = await latest_history(session, setup.get("strategy_id") if setup else None, symbol)
-    out = decide(symbol, now, bars, rd, setup, risk_check, zones, liquidity, hist, vol, regime, style=style)
+    from app.services.readiness import config as checklist_config
+
+    out = decide(
+        symbol,
+        now,
+        bars,
+        rd,
+        setup,
+        risk_check,
+        zones,
+        liquidity,
+        hist,
+        vol,
+        regime,
+        cfg=checklist_config(style),
+        style=style,
+    )
     out["contract"] = ((await _feed_contracts()).get(symbol) or {}).get("contract")
     out["provider"] = provider
     return out

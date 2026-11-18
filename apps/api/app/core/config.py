@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     cost_commission_per_side_standard: float = Field(default=2.50, ge=0)
     cost_commission_per_side_micro: float = Field(default=0.60, ge=0)
     cost_slippage_ticks_per_side: float = Field(default=1.0, ge=0)
+    #: Minimum NET reward:risk to Target 1 (after commission and slippage) for the readiness checklist and
+    #: the entry confirmation. Conservative default; lowering it is a deliberate risk decision.
+    min_net_reward_risk: float = Field(default=1.5, ge=1.0, le=5.0)
 
     # Risk (Phase 4)
     # An account snapshot older than this while the market is open is treated as stale.

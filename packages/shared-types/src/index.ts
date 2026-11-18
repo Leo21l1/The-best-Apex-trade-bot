@@ -1160,6 +1160,12 @@ export interface ConfirmationLevels {
   point_value: number;
   tick_size: number;
   costs_per_contract: number | null;
+  /** Costs when the target (limit order) fills: commission + entry slippage. */
+  costs_if_target: number | null;
+  gross_rr_t1: number | null;
+  gross_rr_t2: number | null;
+  /** Configured minimum net R:R to T1 (APEX_MIN_NET_REWARD_RISK). */
+  min_net_rr: number;
   invalidation_price: number;
   expires_at: string | null;
   basis: string;

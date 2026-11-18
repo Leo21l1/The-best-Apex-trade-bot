@@ -48,6 +48,20 @@ FLAT_BY = time(15, 55)
 LOOKBACK = timedelta(hours=120)  # same window the live scanner uses
 
 
+def net_rr(
+    params: BacktestParams, symbol: str, direction: str, entry: float, stop: float, target: float
+) -> float | None:
+    """Net R:R with the confirmation's cost model and this run's commission and slippage."""
+    from app.services.checklist import ChecklistConfig, reward_risk
+
+    cfg = ChecklistConfig(
+        commission_per_side={"standard": params.commission_per_side, "micro": params.commission_per_side},
+        slippage_ticks_per_side=params.slippage_ticks,
+    )
+    r = reward_risk(symbol, direction, entry, stop, target, cfg)
+    return r["ratio"] if r["valid"] else None
+
+
 @dataclass(frozen=True)
 class BacktestParams:
     strategy_id: str
@@ -60,6 +74,11 @@ class BacktestParams:
     #: Optional stop override: entry reference minus/plus ``stop_atr`` x ATR(14, 5m) at the signal.
     #: The target is then ``target_r[0]`` (or the strategy's first R multiple) times that risk.
     stop_atr: float | None = None
+    #: Skip signals whose NET reward:risk to the exit target (same cost model as the live confirmation)
+    #: is below this. None = take every signal as the strategy designed it.
+    min_net_rr: float | None = None
+    #: Which of the signal's targets the trade exits at (1 = T1, 2 = T2; falls back to T1 if there is no T2).
+    exit_target: int = 1
     #: Share of trading days (from the end) held out as out-of-sample.
     oos_fraction: float = 0.3
     walk_forward_folds: int = 4
@@ -318,7 +337,8 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
         s = 1 if sig.direction == "long" else -1
         entry_bar = rp.bars[i]
         entry = entry_bar.open + s * slip
-        stop, target = sig.stop, sig.targets[0]
+        stop = sig.stop
+        target = sig.targets[1] if params.exit_target == 2 and len(sig.targets) > 1 else sig.targets[0]
         if params.stop_atr:
             a = ctx.atr14[-1] if ctx.atr14 else None
             if not a:
@@ -328,6 +348,11 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
             target = _round_tick(sig.entry + s * rr1 * abs(sig.entry - stop), tick)
         if (entry - stop) * s <= 0 or (target - entry) * s <= 0:
             continue  # gapped beyond stop or target before entry: no trade
+        if params.min_net_rr is not None:
+            # Gate on the levels known at the signal (what the confirmation sees), not on the later fill.
+            nrr = net_rr(params, sig.symbol, sig.direction, sig.entry, stop, target)
+            if nrr is None or nrr < params.min_net_rr:
+                continue
         exit_price = exit_reason = None
         j = i
         while j < n:

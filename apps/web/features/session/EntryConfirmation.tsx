@@ -127,11 +127,20 @@ export function EntryConfirmationPanel({ symbol, refreshKey }: { symbol: string;
                 <div><dt className="text-faint">Stop distance</dt><dd>{lv.stop_ticks} ticks · {lv.stop_points} pts</dd></div>
                 <div><dt className="text-faint">Loss / contract</dt><dd>{usd(lv.loss_per_contract)}</dd></div>
                 <div><dt className="text-faint">Reward T1 / T2</dt><dd>{usd(lv.reward_per_contract_t1)} / {usd(lv.reward_per_contract_t2)}</dd></div>
-                <div><dt className="text-faint">Net R:R T1 / T2</dt><dd>{lv.rr_t1 ?? "—"} / {lv.rr_t2 ?? "—"}</dd></div>
+                <div>
+                  <dt className="text-faint">Net R:R to T1 (min {lv.min_net_rr})</dt>
+                  <dd data-testid="confirm-rr-t1" className={cx(lv.rr_t1 != null && lv.rr_t1 >= lv.min_net_rr ? "text-up" : "text-down")}>
+                    {lv.rr_t1 ?? "—"} <span className="text-faint">(gross {lv.gross_rr_t1 ?? "—"})</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-faint">Net R:R to T2</dt>
+                  <dd data-testid="confirm-rr-t2">{lv.rr_t2 ?? "—"} <span className="text-faint">(gross {lv.gross_rr_t2 ?? "—"})</span></dd>
+                </div>
                 <div><dt className="text-faint">Max size (Risk Guardian)</dt><dd data-testid="confirm-max-size">{c.max_size ?? "UNKNOWN"}</dd></div>
                 <div><dt className="text-faint">Invalidation</dt><dd>{px(lv.invalidation_price)}</dd></div>
               </dl>
-              <p className="mt-1 text-[10px] text-faint">{lv.basis} Costs {usd(lv.costs_per_contract)}/contract. Apex: {c.apex_compliance}.</p>
+              <p className="mt-1 text-[10px] text-faint">{lv.basis} Costs per contract: {usd(lv.costs_if_target)} if a target fills, {usd(lv.costs_per_contract)} if stopped. Apex: {c.apex_compliance}.</p>
             </div>
           )}
 

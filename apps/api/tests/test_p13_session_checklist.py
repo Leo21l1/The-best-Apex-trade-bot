@@ -152,14 +152,15 @@ def _five(bars1: list[Bar]) -> list[Bar]:
 @pytest.mark.parametrize(
     ("symbol", "entry", "stop", "target", "costs", "ratio"),
     [
-        # ES $50/pt: reward 4pt=$200, risk 2pt=$100; costs 2x$2.50 + 2 ticks x $12.50 = $30
-        ("ES", 5000.0, 4998.0, 5004.0, 30.0, round(170 / 130, 2)),
-        # MES $5/pt: reward $20, risk $10; costs 2x$0.60 + 2 x $1.25 = $3.70
-        ("MES", 5000.0, 4998.0, 5004.0, 3.7, round(16.3 / 13.7, 2)),
-        # NQ $20/pt: reward 10pt=$200, risk 5pt=$100; costs $5 + 2 x $5 = $15
-        ("NQ", 21000.0, 20995.0, 21010.0, 15.0, round(185 / 115, 2)),
-        # MNQ $2/pt: reward $20, risk $10; costs $1.20 + 2 x $0.50 = $2.20
-        ("MNQ", 21000.0, 20995.0, 21010.0, 2.2, round(17.8 / 12.2, 2)),
+        # Fill policy: market entry (1 tick slippage), market stop (1 tick), limit target (no slippage).
+        # ES $50/pt, tick $12.50: reward 4pt=$200 - ($5 comm + $12.50 entry slip); risk 2pt=$100 + ($5 + $25)
+        ("ES", 5000.0, 4998.0, 5004.0, 30.0, round(182.5 / 130, 2)),
+        # MES $5/pt, tick $1.25, $0.60/side: reward $20 - $2.45; risk $10 + $3.70
+        ("MES", 5000.0, 4998.0, 5004.0, 3.7, round(17.55 / 13.7, 2)),
+        # NQ $20/pt, tick $5: reward 10pt=$200 - $10; risk 5pt=$100 + $15
+        ("NQ", 21000.0, 20995.0, 21010.0, 15.0, round(190 / 115, 2)),
+        # MNQ $2/pt, tick $0.50, $0.60/side: reward $20 - $1.70; risk $10 + $2.20
+        ("MNQ", 21000.0, 20995.0, 21010.0, 2.2, round(18.3 / 12.2, 2)),
     ],
 )
 def test_reward_risk_math_net_of_costs(
@@ -167,6 +168,7 @@ def test_reward_risk_math_net_of_costs(
 ) -> None:
     rr = reward_risk(symbol, "long", entry, stop, target, ChecklistConfig())
     assert rr["valid"] and rr["costs"] == costs and rr["ratio"] == ratio
+    assert rr["reward_costs"] < rr["costs"]  # a limit target pays no exit slippage
     assert reward_risk(symbol, "long", entry, entry + 1, target, ChecklistConfig())["valid"] is False
     assert reward_risk(symbol, "short", entry, entry + 5, entry + 10, ChecklistConfig())["valid"] is False
 
@@ -300,7 +302,9 @@ async def test_copilot_readiness_tool_payload(admin_client: httpx.AsyncClient) -
     by = {i["key"]: i for i in ck["items"]}
     assert by["setup"]["status"] == "PASS" and by["setup"]["evidence"]["stop"] == 5004.0
     assert by["volume"]["status"] == "PASS" and by["volume"]["evidence"]["ratio"] == 2.0
-    assert by["reward_risk"]["evidence"]["ratio"] == round((300 - 30) / (150 + 30), 2)
+    # $300 reward - ($5 commission + $12.50 entry slippage); $150 risk + ($5 + $25 entry and stop slippage)
+    assert by["reward_risk"]["evidence"]["ratio"] == round((300 - 17.5) / (150 + 30), 2)
+    assert by["reward_risk"]["name"] == "Net R:R to T1 >= 1.5:1" and by["reward_risk"]["status"] == "PASS"
     assert ck["status"] in ("WAIT", "REVIEW SETUP", "NO TRADE")
     assert out["session"]["window"]["key"] == "cash_open" and out["data"]["status"] in ("SIMULATED", "STALE")
     assert (

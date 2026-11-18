@@ -16,7 +16,7 @@ const BASE: EntryConfirmation = {
     direction: "long", entry_zone: [5014.25, 5015.75], entry: 5015, entry_with_slippage: 5015.25, trigger: "vwap_trend on the 5m bar of 10:25 ET",
     stop: 5010, t1: 5025, t2: 5030, extended_target: null, extended_basis: null, stop_points: 5, stop_ticks: 20,
     loss_per_contract: 280, reward_per_contract_t1: 470, reward_per_contract_t2: 720, rr_t1: 1.68, rr_t2: 2.57, point_value: 50,
-    tick_size: 0.25, costs_per_contract: 30, invalidation_price: 5010, expires_at: "2026-11-17T15:45:00+00:00", basis: "Signal levels.",
+    tick_size: 0.25, costs_per_contract: 30, costs_if_target: 17.5, gross_rr_t1: 2, gross_rr_t2: 3, min_net_rr: 1.5, invalidation_price: 5010, expires_at: "2026-11-17T15:45:00+00:00", basis: "Signal levels.",
   },
   max_size: 3, apex_compliance: "NOT CONFIRMED - rule profile unverified", news_status: "CLEAR",
   next_eligible_window: null, regime: { labels: ["bullish trend"] }, expires_at: "2026-11-17T15:45:00+00:00",
@@ -42,6 +42,10 @@ describe("EntryConfirmationPanel", async () => {
     expect(screen.getByTestId("confirm-max-size").textContent).toBe("3");
     expect(screen.getByText(/rule profile unverified/)).toBeTruthy();
     expect(screen.getByTestId("confirm-data-class").textContent).toBe("LIVE");
+    expect(screen.getByTestId("confirm-rr-t1").textContent).toContain("1.68");
+    expect(screen.getByTestId("confirm-rr-t1").textContent).toContain("gross 2");
+    expect(screen.getByText("Net R:R to T1 (min 1.5)")).toBeTruthy();
+    expect(screen.getByTestId("confirm-rr-t2").textContent).toContain("2.57");
   });
 
   it("saves a plan without sending an order and links to the Terminal", async () => {

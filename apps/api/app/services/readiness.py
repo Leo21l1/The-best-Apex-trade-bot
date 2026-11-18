@@ -37,6 +37,7 @@ def config(style: str = "intraday") -> ChecklistConfig:
             "micro": s.cost_commission_per_side_micro,
         },
         slippage_ticks_per_side=s.cost_slippage_ticks_per_side,
+        min_rr=s.min_net_reward_risk,
     )
 
 
