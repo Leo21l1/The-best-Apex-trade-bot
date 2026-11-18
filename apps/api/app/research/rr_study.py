@@ -9,12 +9,15 @@ comparison; the count is passed to the validator so its Bonferroni correction ap
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from app.research.backtest import BacktestParams, run_backtest
 from app.research.bars import Bar
+from app.research.data_audit import audit_bars
 from app.strategies.library import STRATEGY_BY_ID
 
 
@@ -48,11 +51,27 @@ def _summary(res: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def verdict(row: dict[str, Any], simulated: bool) -> str:
+def explain(row: dict[str, Any]) -> str:
+    """Why a row has the trades it has, from the signal funnel and the split."""
+    f = row.get("funnel") or {}
+    split = row.get("split") or {}
+    parts = [f"{f.get('evaluated', 0)} bars evaluated, {f.get('signals', 0)} signals, {f.get('trades', 0)} trades"]
+    if not split.get("out_of_sample_days"):
+        parts.append("no out-of-sample session (fewer than 2 sessions with regular-trading-hours bars)")
+    rejected = {k: v for k, v in f.items() if k.startswith(("signal rejected", "no signal"))}
+    if rejected:
+        top = sorted(rejected.items(), key=lambda kv: -kv[1])[:3]
+        parts.append("top reasons: " + "; ".join(f"{k} x{v}" for k, v in top))
+    return ". ".join(parts)
+
+
+def verdict(row: dict[str, Any], simulated: bool, data: dict[str, Any] | None = None) -> str:
     oos = row["out_of_sample"]
     n = oos.get("trades") or 0
     if simulated:
         return "NOT EVIDENCE: simulated data"
+    if data is not None and data.get("verdict") in ("INSUFFICIENT", "NO DATA"):
+        return f"INSUFFICIENT DATA: {data.get('usable_sessions', 0)} usable sessions (need 20)"
     if n < MIN_OOS_TRADES:
         return f"INSUFFICIENT: {n} out-of-sample trades (need {MIN_OOS_TRADES})"
     if row["validation_passed"]:
@@ -71,8 +90,12 @@ def run_study(
     commission_per_side: float,
     slippage_ticks: float,
     configs: Sequence[RRConfig] = CONFIGS,
+    requested: tuple[datetime, datetime] | None = None,
+    provenance: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     simulated = quality == "simulated"
+    start, end = requested or ((bars[0].ts, bars[-1].ts) if bars else (datetime.min, datetime.min))
+    data = audit_bars(symbol, bars, start, end, provenance)
     rows: list[dict[str, Any]] = []
     for sid in strategies:
         strat = STRATEGY_BY_ID[sid]
@@ -88,8 +111,9 @@ def run_study(
                 min_net_rr=cfg.min_net_rr,
                 monte_carlo_runs=200,
             )
+            funnel: Counter[str] = Counter()
             try:
-                res = run_backtest(p, bars, quality, prior_configs=len(configs) - 1, sensitivity=False)
+                res = run_backtest(p, bars, quality, prior_configs=len(configs) - 1, sensitivity=False, stats=funnel)
             except ValueError as exc:
                 rows.append({"strategy_id": sid, "config": cfg.key, "error": str(exc)})
                 continue
@@ -99,21 +123,30 @@ def run_study(
                 "label": cfg.label,
                 "design_t1_r": strat.target_r[0],
                 **_summary(res),
+                "split": res.get("split"),
+                "funnel": dict(funnel),
             }
-            row["verdict"] = verdict(row, simulated)
+            row["verdict"] = verdict(row, simulated, data)
+            row["explanation"] = explain(row)
             rows.append(row)
     supported = [r for r in rows if r.get("verdict", "").startswith("SUPPORTED")]
     best = max(supported, key=lambda r: r["out_of_sample"].get("expectancy") or 0, default=None)
+    first_ok = next((r for r in rows if r.get("split")), None)
     return {
         "symbol": symbol,
         "data_class": quality.upper(),
         "bars": len(bars),
+        "data": data,
+        "split": first_ok["split"] if first_ok else None,
         "costs": {"commission_per_side": commission_per_side, "slippage_ticks_per_side": slippage_ticks},
         "configs": [cfg.__dict__ for cfg in configs],
         "rows": rows,
         "best_supported": best,
         "conclusion": (
-            f"{best['strategy_id']} / {best['label']} has the strongest out-of-sample evidence."
+            f"Data {data['verdict']}: {data.get('usable_sessions', 0)} usable sessions of regular-hours data "
+            f"(need {20} for a study). No strategy or configuration conclusions are possible; backfill history."
+            if data.get("verdict") in ("INSUFFICIENT", "NO DATA")
+            else f"{best['strategy_id']} / {best['label']} has the strongest out-of-sample evidence."
             if best
             else "No configuration has sufficient out-of-sample evidence. Keep the conservative default and "
             "collect more history before relying on any of them."

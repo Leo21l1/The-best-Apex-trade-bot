@@ -122,7 +122,7 @@ async def test_study_labels_simulated_results_as_not_evidence() -> None:
     res = run_study(b, "ES", "simulated", ["vwap_trend"], 2.5, 1.0, configs=CONFIGS[:2])
     assert res["data_class"] == "SIMULATED" and res["best_supported"] is None
     assert all(r["verdict"].startswith("NOT EVIDENCE") for r in res["rows"])
-    assert "No configuration has sufficient" in res["conclusion"]
+    assert res["conclusion"].startswith("Data INSUFFICIENT")  # 7 seeded sessions: below the 20-session standard
     row = {"out_of_sample": {"trades": 12, "expectancy": 40.0}, "validation_passed": False, "failed_checks": []}
     assert verdict(row, simulated=False).startswith("INSUFFICIENT")
     row = {"out_of_sample": {"trades": 80, "expectancy": 25.0}, "validation_passed": True, "failed_checks": []}

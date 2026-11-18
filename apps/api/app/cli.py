@@ -203,52 +203,171 @@ async def pattern_stats_cmd(symbol: str, timeframe: str, days: int, horizon: int
     return 0
 
 
-async def rr_study_cmd(symbol: str, days: int, strategies: list[str], out: str | None) -> int:
-    """Compare reward:risk configurations out of sample on stored bars (read-only)."""
-    import json
+async def _provenance(session: Any, provider: str, symbol: str, since: Any, until: Any) -> dict[str, int]:
+    from sqlalchemy import text
+
+    rows = await session.execute(
+        text(
+            "SELECT quality, count(*) FROM candles WHERE provider = :p AND symbol = :s AND ts >= :a AND ts < :b "
+            "GROUP BY quality"
+        ),
+        {"p": provider, "s": symbol, "a": since, "b": until},
+    )
+    return {f"{provider}/{r[0]}": int(r[1]) for r in rows}
+
+
+def _print_audit(d: dict[str, Any]) -> None:
+    print(f"== {d['symbol']} stored history (requested {d['requested']['days']} days)")
+    if not d.get("bars"):
+        print("   no bars stored in the requested window")
+        return
+    print(f"   bars {d['bars']} | {d['earliest_bar']} -> {d['latest_bar']} ({d['span_days']} days)")
+    print(f"   provenance {d['provenance']}")
+    print(
+        f"   sessions {d['sessions']} | usable (>= 300 regular-hours bars) {d['usable_sessions']} | partial "
+        f"{len(d['partial_sessions'])} | overnight-only {len(d['overnight_only_sessions'])}"
+    )
+    if d.get("truncated_by_history"):
+        print("   NOTE: stored history starts after the requested start; the window is limited by what is stored")
+    print(f"   integrity {d['integrity']}")
+    print(f"   missing in-session minutes {d['missing_in_session_minutes']} | largest gaps {d['largest_gaps'][:3]}")
+    print(f"   price range {d['price_range']} | median volume {d['median_volume']}")
+    print(f"   DATA VERDICT: {d['verdict']} ({d['verdict_rule']})")
+
+
+async def _load(symbol: str, days: int) -> tuple[Any, list[Any], dict[str, int], Any, Any]:
     from datetime import UTC, datetime, timedelta
 
     from app.core.config import get_settings
-    from app.marketdata.instruments import INSTRUMENTS
-    from app.research.rr_study import run_study
     from app.research.scanner import load_bars
-    from app.strategies.library import STRATEGY_BY_ID
 
     s = get_settings()
-    if s.market_data_provider == "none":
-        print("No market-data provider configured.")
-        return 1
+    now = datetime.now(UTC)
+    start = now - timedelta(days=days)
+    async with get_sessionmaker()() as session:
+        bars = await load_bars(session, s.market_data_provider, symbol, start, now)
+        prov = await _provenance(session, s.market_data_provider, symbol, start, now)
+    return s, bars, prov, start, now
+
+
+async def data_audit_cmd(symbols: list[str], days: int) -> int:
+    """Stored-history coverage, sessions, gaps, integrity and provenance (read-only)."""
+    import json
+
+    from app.research.data_audit import audit_bars, compare_instruments
+
+    loaded = {}
+    for sym in symbols:
+        _s, bars, prov, start, now = await _load(sym, days)
+        loaded[sym] = bars
+        d = audit_bars(sym, bars, start, now, prov)
+        _print_audit(d)
+        print(f"   usable sessions: {d.get('usable_session_dates')}")
+    if len(symbols) >= 2:
+        for i in range(1, len(symbols)):
+            print(
+                "== independence",
+                json.dumps(compare_instruments(symbols[0], loaded[symbols[0]], symbols[i], loaded[symbols[i]])),
+            )
+    return 0
+
+
+async def rr_study_cmd(symbol: str, days: int, strategies: list[str], out: str | None) -> int:
+    """Compare reward:risk configurations out of sample on stored bars (read-only)."""
+    import json
+
+    from app.marketdata.instruments import INSTRUMENTS
+    from app.research.rr_study import run_study
+    from app.strategies.library import STRATEGY_BY_ID
+
     bad = [x for x in strategies if x not in STRATEGY_BY_ID]
     if bad:
         print(f"Unknown strategies: {bad}. Known: {sorted(STRATEGY_BY_ID)}")
         return 2
-    now = datetime.now(UTC)
-    async with get_sessionmaker()() as session:
-        bars = await load_bars(session, s.market_data_provider, symbol, now - timedelta(days=days), now)
-    if len(bars) < 1000:
-        print(f"Only {len(bars)} stored 1-minute bars for {symbol}; need >= 1000. Backfill history first.")
+    s, bars, prov, start, now = await _load(symbol, days)
+    if s.market_data_provider == "none":
+        print("No market-data provider configured.")
         return 1
     inst = INSTRUMENTS[symbol]
     comm = s.cost_commission_per_side_micro if inst.is_micro else s.cost_commission_per_side_standard
     quality = "simulated" if s.market_data_provider == "simulated" else "historical"
-    res = run_study(bars, symbol, quality, strategies, comm, s.cost_slippage_ticks_per_side)
-    text = json.dumps(res, indent=2, default=str)
+    res = run_study(
+        bars, symbol, quality, strategies, comm, s.cost_slippage_ticks_per_side, requested=(start, now), provenance=prov
+    )
     if out:
         from pathlib import Path
 
-        Path(out).write_text(text)  # noqa: ASYNC240 - one small file at the end of a CLI run
-    print(f"{symbol}: {len(bars)} bars ({res['data_class']}), costs {res['costs']}")
-    print(f"{'strategy':18} {'config':10} {'OOS trades':>10} {'OOS exp $':>10} {'OOS PF':>7}  verdict")
+        Path(out).write_text(json.dumps(res, indent=2, default=str))  # noqa: ASYNC240
+    _print_audit(res["data"])
+    sp = res.get("split") or {}
+    print(
+        f"== split: {sp.get('in_sample_days', 0)} in-sample sessions ({sp.get('in_sample_bars', 0)} bars), "
+        f"{sp.get('out_of_sample_days', 0)} out-of-sample sessions ({sp.get('out_of_sample_bars', 0)} bars); "
+        f"costs {res['costs']}"
+    )
+    print(f"\n{'strategy':18} {'config':10} {'signals':>7} {'IS tr':>5} {'OOS tr':>6} {'OOS exp $':>10}  verdict")
     for r in res["rows"]:
         if "error" in r:
             print(f"{r['strategy_id']:18} {r['config']:10} error: {r['error']}")
             continue
-        o = r["out_of_sample"]
+        o, f = r["out_of_sample"], r.get("funnel", {})
         print(
-            f"{r['strategy_id']:18} {r['config']:10} {o.get('trades') or 0:>10} {o.get('expectancy') or 0:>10} "
-            f"{o.get('profit_factor') if o.get('profit_factor') is not None else '-':>7}  {r['verdict']}"
+            f"{r['strategy_id']:18} {r['config']:10} {f.get('signals', 0):>7} {r['in_sample'].get('trades') or 0:>5} "
+            f"{o.get('trades') or 0:>6} {o.get('expectancy') or 0:>10}  {r['verdict']}"
         )
+    print("\n== signal funnel per strategy (exit at T1, every signal):")
+    for r in res["rows"]:
+        if r.get("config") != "t1_all" or "funnel" not in r:
+            continue
+        print(f"-- {r['strategy_id']}: {r['explanation']}")
+        for k, v in sorted(r["funnel"].items(), key=lambda kv: -kv[1]):
+            print(f"     {v:>6}  {k}")
+    gates = [r for r in res["rows"] if r.get("config") not in ("t1_all", None) and r.get("funnel")]
+    for r in gates:
+        rej = {k: v for k, v in r["funnel"].items() if k.startswith("signal rejected: net R:R")}
+        if rej:
+            print(f"   {r['strategy_id']:18} {r['config']:10} {rej}")
     print("\n" + res["conclusion"])
+    return 0
+
+
+async def backfill_cmd(symbols: list[str], sessions: int, approve_cost: float | None, accept_unknown: bool) -> int:
+    """Estimate (default) or start an approved historical backfill. Never downloads without approval."""
+    from app.core.config import get_settings
+    from app.services import history
+
+    s = get_settings()
+    if s.market_data_provider in ("none",):
+        print("No market-data provider configured.")
+        return 1
+    async with get_sessionmaker()() as session:
+        est = await history.estimate(session, symbols, sessions)
+    for it in est["items"]:
+        print(
+            f"{it['symbol']}: {it['sessions_stored']} sessions stored, {len(it['missing_sessions'])} missing "
+            f"(target {sessions}); estimated cost {it['estimated_cost_usd']}"
+            + (f" - {it['note']}" if it["note"] else "")
+        )
+    cost = est["estimated_cost_usd"]
+    print(f"TOTAL ESTIMATED COST: {'UNKNOWN' if cost is None else f'${cost:.4f}'} ({est['note']})")
+    if approve_cost is None and not accept_unknown:
+        print("Estimate only. To start, re-run with --approve-cost <amount >= estimate>.")
+        return 0
+    if cost is None and not accept_unknown:
+        print("The provider could not estimate the cost; add --accept-unknown-cost to proceed anyway.")
+        return 3
+    if cost is not None and cost > 0 and (approve_cost is None or approve_cost + 1e-9 < cost):
+        print(f"Approved amount is below the estimate ${cost:.4f}; nothing started.")
+        return 3
+    job = await history.get_job()
+    if job and job["status"] in ("queued", "running"):
+        print(f"A backfill is already running: {job['id']}")
+        return 4
+    job = await history.start_job(symbols, sessions, cost, "cli")
+    print(
+        f"Backfill {job['id']} queued. The worker fetches a few sessions per cycle; follow it on System Health "
+        "or with `python -m app.cli data-audit`."
+    )
     return 0
 
 
@@ -269,6 +388,14 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument("--timeframe", default="5m")
     ps.add_argument("--days", type=int, default=60)
     ps.add_argument("--horizon", type=int, default=12)
+    da = sub.add_parser("data-audit", help="Stored-history coverage, sessions, gaps, integrity (read-only)")
+    da.add_argument("--symbols", default="ES,NQ")
+    da.add_argument("--days", type=int, default=60)
+    bf = sub.add_parser("backfill", help="Estimate (default) or start an approved historical backfill")
+    bf.add_argument("--symbols", default="ES,NQ")
+    bf.add_argument("--sessions", type=int, default=25)
+    bf.add_argument("--approve-cost", type=float, default=None)
+    bf.add_argument("--accept-unknown-cost", action="store_true")
     rr = sub.add_parser("rr-study", help="Compare reward:risk configurations out of sample on stored bars")
     rr.add_argument("--symbol", default="ES")
     rr.add_argument("--days", type=int, default=60)
@@ -285,6 +412,17 @@ def main(argv: list[str] | None = None) -> int:
                 return await create_admin(args.email, pw)
             if args.cmd == "databento-check":
                 return await databento_check(args.live_seconds)
+            if args.cmd == "data-audit":
+                return await data_audit_cmd(
+                    [x.strip().upper() for x in args.symbols.split(",") if x.strip()], args.days
+                )
+            if args.cmd == "backfill":
+                return await backfill_cmd(
+                    [x.strip().upper() for x in args.symbols.split(",") if x.strip()],
+                    args.sessions,
+                    args.approve_cost,
+                    args.accept_unknown_cost,
+                )
             if args.cmd == "rr-study":
                 syms = [x.strip() for x in args.strategies.split(",") if x.strip()]
                 return await rr_study_cmd(args.symbol.upper(), args.days, syms, args.out)

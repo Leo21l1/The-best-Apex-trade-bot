@@ -27,6 +27,7 @@ import itertools
 import json
 import math
 import random
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, time, timedelta
@@ -36,7 +37,7 @@ from app.marketdata.calendar import ET, trading_day
 from app.marketdata.instruments import INSTRUMENTS
 from app.marketdata.types import Timeframe
 from app.research.bars import Bar, aggregate
-from app.research.indicators import OPENING_RANGE_MINUTES, Levels
+from app.research.indicators import OPENING_RANGE_MINUTES, Levels, is_rth
 from app.research.validation import STANDARDS, ValidationStandards
 from app.strategies.base import MarketContext, Strategy
 from app.strategies.library import STRATEGY_BY_ID
@@ -308,8 +309,13 @@ def _strategy(params: BacktestParams) -> Strategy:
     return s
 
 
-def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
-    """Run one configuration over ascending 1-minute bars and return the trades."""
+def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | None = None) -> list[Trade]:
+    """Run one configuration over ascending 1-minute bars and return the trades.
+
+    ``stats`` (optional) counts every completed 5-minute bar by outcome, so a run with few or no
+    trades can be explained: outside the evaluation window, position already open, missing history,
+    the first strategy condition that failed, and each reason a signal did not become a trade."""
+    st: Counter[str] = stats if stats is not None else Counter()
     inst = INSTRUMENTS[params.symbol]
     tick = float(inst.tick_size)
     point_value = float(inst.point_value)
@@ -324,15 +330,29 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
 
     for close_ts in m5_closes:
         local = close_ts.astimezone(ET).time()
-        if not (EVAL_START <= local <= EVAL_END) or (pos is not None and close_ts <= pos["exit_after"]):
+        st["5m bars"] += 1
+        if not (EVAL_START <= local <= EVAL_END):
+            st["outside evaluation window (09:35-15:30 ET)"] += 1
             continue
+        if pos is not None and close_ts <= pos["exit_after"]:
+            st["position already open"] += 1
+            continue
+        st["evaluated"] += 1
         ctx = rp.context(close_ts)
         ev = strategy.evaluate(ctx)
         sig = ev.signal
         if sig is None:
+            if ev.note:
+                key = "missing history" if "insufficient history" in ev.note else ev.note
+                st[f"no signal: {key}"] += 1
+            else:
+                failed = next((c.name for c in ev.conditions if not c.passed), "conditions not met")
+                st[f"no signal: condition '{failed}' failed"] += 1
             continue
+        st["signals"] += 1
         i = bisect.bisect_left(rp.times, close_ts)
         if i >= n or rp.times[i] - close_ts > timedelta(minutes=2):
+            st["signal rejected: no next bar to fill on"] += 1
             continue  # no next bar to fill on (session end / data gap)
         s = 1 if sig.direction == "long" else -1
         entry_bar = rp.bars[i]
@@ -342,16 +362,19 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
         if params.stop_atr:
             a = ctx.atr14[-1] if ctx.atr14 else None
             if not a:
+                st["signal rejected: no ATR for the stop override"] += 1
                 continue  # no ATR yet: the override cannot be applied honestly
             stop = _round_tick(sig.entry - s * params.stop_atr * a, tick)
             rr1 = (params.target_r or strategy.target_r)[0]
             target = _round_tick(sig.entry + s * rr1 * abs(sig.entry - stop), tick)
         if (entry - stop) * s <= 0 or (target - entry) * s <= 0:
+            st["signal rejected: price gapped beyond stop or target before entry"] += 1
             continue  # gapped beyond stop or target before entry: no trade
         if params.min_net_rr is not None:
             # Gate on the levels known at the signal (what the confirmation sees), not on the later fill.
             nrr = net_rr(params, sig.symbol, sig.direction, sig.entry, stop, target)
             if nrr is None or nrr < params.min_net_rr:
+                st[f"signal rejected: net R:R below {params.min_net_rr:g}"] += 1
                 continue
         exit_price = exit_reason = None
         j = i
@@ -379,6 +402,7 @@ def simulate(params: BacktestParams, bars: Sequence[Bar]) -> list[Trade]:
         commission = 2 * params.commission_per_side * params.quantity
         risk = abs(entry - stop)
         pnl = (exit_price - entry) * s * point_value * params.quantity - commission
+        st["trades"] += 1
         trades.append(
             Trade(
                 direction=sig.direction,
@@ -509,7 +533,13 @@ def monte_carlo(trades: Sequence[Trade], runs: int, seed: int) -> dict[str, Any]
 
 
 def _days(bars: Sequence[Bar]) -> list[str]:
-    return sorted({trading_day(b.ts).isoformat() for b in bars})
+    """Trading days that can contain a trade: those with regular-session (09:30-16:00 ET) bars.
+
+    Strategies only enter between 09:35 and 15:30 ET. Counting a day that holds only overnight bars
+    (e.g. the session that opened at 18:00 ET last night) made it the whole out-of-sample period on
+    short histories, so the out-of-sample test could never contain a trade.
+    """
+    return sorted({trading_day(b.ts).isoformat() for b in bars if is_rth(b.ts)})
 
 
 def evaluate_validation(
@@ -564,7 +594,12 @@ def evaluate_validation(
 
 
 def run_backtest(
-    params: BacktestParams, bars: Sequence[Bar], quality: str, prior_configs: int = 0, sensitivity: bool = True
+    params: BacktestParams,
+    bars: Sequence[Bar],
+    quality: str,
+    prior_configs: int = 0,
+    sensitivity: bool = True,
+    stats: Counter[str] | None = None,
 ) -> dict[str, Any]:
     """Full experiment: base run, in-sample / out-of-sample split, walk-forward folds, Monte Carlo,
     parameter sensitivity and validation against the research standards."""
@@ -574,12 +609,14 @@ def run_backtest(
         raise ValueError(f"{params.symbol} is not eligible for {params.strategy_id}")
     bars = list(bars)
     days = _days(bars)
-    trades = simulate(params, bars)
+    trades = simulate(params, bars, stats)
     attach_rvol(trades, bars)
     total_minutes = len(bars)
     full = metrics(trades, len(days), total_minutes)
 
     split = int(len(days) * (1 - params.oos_fraction))
+    # At least one session on each side when possible; a single session is all in-sample (no OOS).
+    split = min(max(split, 1), len(days) - 1) if len(days) >= 2 else len(days)
     is_days, oos_days = set(days[:split]), set(days[split:])
     in_sample = metrics([t for t in trades if t.trading_day in is_days], len(is_days), total_minutes)
     oos = metrics([t for t in trades if t.trading_day in oos_days], len(oos_days), total_minutes)
@@ -637,6 +674,9 @@ def run_backtest(
             "in_sample_days": len(is_days),
             "out_of_sample_days": len(oos_days),
             "first_oos_day": min(oos_days) if oos_days else None,
+            "in_sample_bars": sum(1 for b in bars if trading_day(b.ts).isoformat() in is_days),
+            "out_of_sample_bars": sum(1 for b in bars if trading_day(b.ts).isoformat() in oos_days),
+            "rule": "chronological: the last oos_fraction of trading days with regular-session bars",
         },
         "walk_forward": folds,
         "monte_carlo": monte_carlo(trades, params.monte_carlo_runs, params.seed),
