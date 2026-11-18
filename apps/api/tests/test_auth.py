@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
+from app.core.ratelimit import rate_limiter
 from app.core.security import create_access_token
 from app.models.audit import AuditLog
 from tests.conftest import ADMIN_EMAIL, CSRF, STRONG_PASSWORD
@@ -78,7 +80,14 @@ async def test_lockout_after_repeated_failures(admin_client: httpx.AsyncClient) 
     assert r.status_code == 423
 
 
-async def test_auth_rate_limit(client: httpx.AsyncClient) -> None:
+# Fixed-window limiter buckets on int(clock()) // 60. Pin the clock mid-window so a burst can't
+# straddle a minute boundary (which legitimately resets the counter and made this test flaky).
+WINDOW_START = 1_699_999_980.0  # multiple of 60
+MID_WINDOW_TS = WINDOW_START + 30.0
+
+
+async def test_auth_rate_limit(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rate_limiter, "clock", lambda: MID_WINDOW_TS)
     get_settings().auth_rate_limit_per_minute = 3
     codes = [
         (await client.post("/api/auth/login", json={"email": "x@example.com", "password": "nope"})).status_code
@@ -86,6 +95,21 @@ async def test_auth_rate_limit(client: httpx.AsyncClient) -> None:
     ]
     assert codes[:3] == [401, 401, 401]
     assert codes[3:] == [429, 429]
+
+
+async def test_auth_rate_limit_resets_on_window_boundary(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Reproduces the old flake deterministically: a burst crossing a minute boundary starts a
+    # fresh window, so requests after the boundary are allowed again.
+    now = [WINDOW_START + 59.0]  # last second of the window
+    monkeypatch.setattr(rate_limiter, "clock", lambda: now[0])
+    get_settings().auth_rate_limit_per_minute = 3
+    login = {"email": "x@example.com", "password": "nope"}
+    codes = [(await client.post("/api/auth/login", json=login)).status_code for _ in range(4)]
+    assert codes == [401, 401, 401, 429]
+    now[0] += 1.0  # next window
+    assert (await client.post("/api/auth/login", json=login)).status_code == 401
 
 
 async def test_tampered_and_foreign_tokens_rejected(admin_client: httpx.AsyncClient) -> None:

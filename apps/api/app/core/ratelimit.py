@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from collections.abc import Callable
 
 from redis.exceptions import RedisError
 
@@ -15,7 +16,9 @@ from app.core.redis import get_redis
 
 
 class RateLimiter:
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        # Wall-clock source for window bucketing; injectable so tests can pin the window.
+        self.clock = clock
         self._local: dict[str, tuple[int, int]] = defaultdict(lambda: (0, 0))
 
     def _local_hit(self, key: str, window: int) -> int:
@@ -30,7 +33,7 @@ class RateLimiter:
 
     async def hit(self, bucket: str, client: str, limit: int, period_s: int = 60) -> bool:
         """Register a hit; return True if allowed."""
-        window = int(time.time()) // period_s
+        window = int(self.clock()) // period_s
         key = f"rl:{bucket}:{client}:{window}"
         try:
             redis = get_redis()
