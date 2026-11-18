@@ -50,6 +50,15 @@ RANGE = "/v0/timeseries.get_range"
 PARAMS = {"dataset": "GLBX.MDP3", "symbols": "ES.v.0"}
 
 
+def _frozen(at: datetime) -> type[datetime]:
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            return at if tz is not None else at.replace(tzinfo=None)
+
+    return Frozen
+
+
 async def test_free_metadata_timeout_is_retried_with_backoff() -> None:
     def handler(req: httpx.Request, n: int) -> httpx.Response:
         if n < 3:
@@ -142,7 +151,10 @@ def _cost_provider(handler: Any) -> DatabentoProvider:
     return p
 
 
-async def test_estimate_reports_progress_and_sums_ranges() -> None:
+async def test_estimate_reports_progress_and_sums_ranges(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pin the service clock to the test's NOW (the fake provider's data ends there); otherwise the
+    # expected sessions drift past the provider's data end as real time passes.
+    monkeypatch.setattr(history, "datetime", _frozen(NOW))
     get_settings().market_data_provider = "databento"
     msgs: list[str] = []
     p = _cost_provider(lambda req, n: httpx.Response(200, text="0.05"))

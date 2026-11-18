@@ -234,3 +234,27 @@ Reported, not hidden:
 * Every trade whose planned risk exceeds $1,000 is listed, as is every trade that lost more than planned.
 * The closed-P&L drawdown, the first breach of the configured maximum drawdown and the days breaching
   the daily loss limit are all reported.
+
+## Opportunities vs strategy detections (correction)
+
+Setup levels come from market structure, not from each strategy, so several strategies that fire on
+the same 5m close in the same direction produce the identical plan: one market opportunity, not
+independent trades. Previously each detection was counted, which inflated combined results. For
+example, NQ on 2025-12-01 at 10:40 ET was detected by ORB, VWAP Trend and Momentum Pullback, and its
++$2,660 was counted three times.
+
+* **Opportunity ID:** instrument, direction, signal close (minute), and entry/stop/TP1 in ticks. All
+  detecting strategies are preserved. Plans that differ by one tick or occur at a different time stay
+  separate.
+* **Reports** (study and `GET /api/signals/stats`):
+  1. Strategy-level detections.
+  2. Unique opportunities: the combined performance, with win rate, $/trade, profit factor, drawdown
+     and confidence intervals computed on these.
+  3. One position at a time: the executable sequence, with an outcome-blind tie-break of higher score,
+     then smaller planned risk.
+  4. Risk-eligible (planned risk ≤ $1,000), one position at a time.
+* **Exposure** if every detection were executed: maximum concurrent positions and planned risk.
+* **Structural stops are never moved** to fit the risk limit. Ineligible opportunities are reported,
+  not altered.
+* The study states whether 3/5 is still positive after duplicates and ineligible opportunities are
+  removed.

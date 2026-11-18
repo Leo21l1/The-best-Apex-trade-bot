@@ -141,4 +141,4 @@ async def test_study_excludes_the_stored_holdout_even_when_sessions_were_added()
     accounted = sum(r["funnel"][k] for k in (*cs.REJECTIONS, "mandatory failed", "recorded"))
     assert accounted == r["funnel"]["signals"]  # every signal is accounted for exactly once
     md = cs.to_markdown(r)
-    assert "Rejections (first reason)" in md and "Every 4/5+ trade" in md
+    assert "Distinct opportunity counts" in md and "Every 4/5+ opportunity" in md

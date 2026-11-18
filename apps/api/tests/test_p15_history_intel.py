@@ -22,6 +22,15 @@ from tests.conftest import CSRF
 NOW = datetime(2026, 11, 13, 16, 0, tzinfo=UTC)  # Friday 11:00 ET
 
 
+def _frozen(at: datetime) -> type[datetime]:
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            return at if tz is not None else at.replace(tzinfo=None)
+
+    return Frozen
+
+
 async def seed(days: int) -> None:
     get_settings().market_data_provider = "simulated"
     p = SimulatedProvider(clock=lambda: NOW)
@@ -62,7 +71,10 @@ class FakeProvider:
         return await self.inner.fetch_candles(symbol, start, min(end, NOW))
 
 
-async def test_backfill_step_fetches_only_missing_and_never_duplicates() -> None:
+async def test_backfill_step_fetches_only_missing_and_never_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Pin the service clock to the test's NOW (the fake provider's data ends there); otherwise the
+    # expected sessions drift past the provider's data end as real time passes.
+    monkeypatch.setattr(history, "datetime", _frozen(NOW))
     await seed(4)
     await history.start_job(["ES"], 8, 0.0, "admin")
     prov = FakeProvider()

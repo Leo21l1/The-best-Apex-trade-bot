@@ -393,7 +393,9 @@ def compare_thresholds(items: Sequence[dict[str, Any]], counts: dict[int, int] |
     for name, k in tiers.items():
         sub = [o for o in rows if o.score >= k]
         res[name] = {
-            "signals": sum(v for s, v in (counts or {}).items() if s >= k) if counts else None,
+            "signals": sum(v for s, v in counts.items() if s >= k)
+            if counts
+            else sum(1 for x in items if x["score"] >= k),
             "resolved": len(sub),
             **_summ(sub),
             "by_strategy": {g: _summ([o for o in sub if o.strategy == g]) for g in sorted({o.strategy for o in sub})},
@@ -460,10 +462,114 @@ async def forward_stats(session: AsyncSession, days: int = 365) -> dict[str, Any
     by_status: dict[str, int] = {}
     for r in rows:
         by_status[r.status] = by_status.get(r.status, 0) + 1
+    events = group_opportunities(items)
     return {
         "recorded": len(rows),
         "qualified": sum(1 for r in rows if r.qualified),
+        "opportunities": len(events),
+        "multi_strategy_opportunities": sum(1 for e in events if e["detections"] > 1),
         "by_status": by_status,
-        "comparison": compare_thresholds(items, counts),
+        # Combined performance counts each market opportunity once (strategies that detected the same plan
+        # are listed together); strategy-level detection results are reported separately.
+        "comparison": compare_thresholds(events),
+        "strategy_detections": compare_thresholds(items, counts),
         "label": "Prospective, hypothetical outcomes of recorded technical setups (no orders were placed).",
+    }
+
+
+# ------------------------------------------------------------------------------ opportunities
+#
+# Several strategies can detect the SAME executable plan: the setup engine builds levels from market
+# structure, so detections on the same 5m close in the same direction get identical entry/stop/TP1.
+# Those are one market opportunity, not independent trades. Plans that differ by even one tick in
+# entry, stop or target, or occur at a different time, are kept separate (they are different trades);
+# their simultaneous exposure is reported by ``one_position_at_a_time`` and ``exposure``.
+
+
+def _ts(v: Any) -> datetime:
+    return v if isinstance(v, datetime) else datetime.fromisoformat(v)
+
+
+def opportunity_id(x: dict[str, Any]) -> str:
+    import hashlib
+
+    tick = float(INSTRUMENTS[x["symbol"]].tick_size)
+    key = "|".join(
+        [
+            x["symbol"],
+            x["direction"],
+            _ts(x["confirmed_at"]).astimezone(UTC).strftime("%Y-%m-%dT%H:%M"),
+            *(str(round(float(x[k]) / tick)) for k in ("entry", "stop", "tp1")),
+        ]
+    )
+    return "opp-" + hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()[:12]
+
+
+def group_opportunities(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per opportunity, preserving every detecting strategy. Members' outcomes must agree (same plan,
+    same bars); a disagreement is flagged as a calculation defect rather than silently resolved."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for x in items:
+        groups.setdefault(opportunity_id(x), []).append(x)
+    out = []
+    for oid, xs in groups.items():
+        rep = max(xs, key=lambda x: (x["score"], x["strategy_id"]))
+        outcomes = {(x.get("status"), x.get("outcome"), x.get("outcome_usd")) for x in xs}
+        out.append(
+            {
+                **rep,
+                "opportunity_id": oid,
+                "strategies": sorted({x["strategy_id"] for x in xs}),
+                "strategy_id": "+".join(sorted({x["strategy_id"] for x in xs})),
+                "detections": len(xs),
+                "score": max(x["score"] for x in xs),
+                "consistent": len(outcomes) == 1,
+            }
+        )
+    return sorted(out, key=lambda e: (_ts(e["confirmed_at"]), e["opportunity_id"]))
+
+
+def _end(x: dict[str, Any]) -> datetime:
+    """When the opportunity stops occupying the trader: exit, end of the setup, or expiry."""
+    for k in ("outcome_at", "status_at"):
+        if x.get(k):
+            return _ts(x[k])
+    if x.get("filled_at"):
+        return _ts(x["filled_at"]) + timedelta(days=1)  # open position without a recorded exit
+    return _ts(x["expires_at"])
+
+
+def one_position_at_a_time(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Executable sequence for one account: an opportunity is taken only if nothing is pending or open.
+
+    Pre-registered, outcome-blind tie-break at the same time: higher score, then smaller planned risk.
+    """
+    order = sorted(
+        events,
+        key=lambda e: (_ts(e["confirmed_at"]), -e["score"], e.get("net_risk_usd") or 0, e.get("opportunity_id", "")),
+    )
+    taken: list[dict[str, Any]] = []
+    busy = None
+    for e in order:
+        if busy is not None and _ts(e["confirmed_at"]) < busy:
+            continue
+        taken.append(e)
+        busy = _end(e)
+    return taken
+
+
+def exposure(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Hypothetical simultaneous exposure if every row were executed as its own 1-contract position."""
+    ivs = [(_ts(x["filled_at"]), _end(x), x.get("net_risk_usd") or 0.0) for x in items if x.get("filled_at")]
+    pts = sorted([(a, 1, r) for a, _, r in ivs] + [(b, -1, r) for _, b, r in ivs], key=lambda p: (p[0], p[1]))
+    cur = peak = 0
+    risk = peak_risk = 0.0
+    for _, d, r in pts:
+        cur += d
+        risk += d * r
+        peak, peak_risk = max(peak, cur), max(peak_risk, risk)
+    return {
+        "positions": len(ivs),
+        "max_concurrent_positions": peak,
+        "max_concurrent_planned_risk_usd": round(peak_risk, 2),
     }

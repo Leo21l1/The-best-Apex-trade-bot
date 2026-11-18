@@ -160,6 +160,20 @@ def r_vs_dollars(items: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _verdict_3(views: dict[str, Any]) -> str:
+    """Is 3/5 still positive once duplicates and risk-ineligible opportunities are removed?"""
+    t = views["risk_eligible_one_position"]["tiers"]["3/5 loose (research only)"]
+    n, e, ci = t["resolved"], t["expectancy"], t["expectancy_ci"]
+    if not n:
+        return "No resolved risk-eligible 3/5 opportunities: nothing to evaluate."
+    base = f"3/5, unique and risk-eligible, one position at a time: {n} resolved, ${e}/trade"
+    if ci and ci[0] > 0:
+        return base + f", 95% CI {ci} entirely above $0 - positive in this sample (still unvalidated research)."
+    if ci and ci[1] < 0:
+        return base + f", 95% CI {ci} entirely below $0 - negative in this sample."
+    return base + (f", 95% CI {ci} includes $0" if ci else "") + " - not distinguishable from zero."
+
+
 def run(
     symbol: str,
     m1: Sequence[Bar],
@@ -284,8 +298,20 @@ def run(
             )
             if progress:
                 progress(sid, funnel["recorded"])
-    cmp = signal_tracker.compare_thresholds(items, counts)
+    st = signal_tracker
+    detections = [x for x in items if x["score"] >= 3]
+    events = st.group_opportunities(detections)
     lim = {"per_trade": 1000.0, "daily_loss": 1000.0, "max_dd": 2000.0, **(risk_limits or {})}
+    eligible = [e for e in events if (e.get("net_risk_usd") or 0) <= lim["per_trade"]]
+    seq_all = st.one_position_at_a_time(events)
+    seq_eligible = st.one_position_at_a_time(eligible)
+    views = {
+        "strategy_detections": st.compare_thresholds(detections, counts),
+        "unique_opportunities": st.compare_thresholds(events),
+        "one_position_at_a_time": st.compare_thresholds(seq_all),
+        "risk_eligible_one_position": st.compare_thresholds(seq_eligible),
+    }
+    cmp = views["unique_opportunities"]
     tiers = {"3/5": 3, "4/5": 4, "5/5": 5}
     return {
         "symbol": symbol,
@@ -311,12 +337,47 @@ def run(
             k: sum(1 for x in items if x["status"] == k) for k in ("CONFIRMED", "EXPIRED", "MISSED", "INVALIDATED")
         },
         "comparison": cmp,
-        "r_vs_dollars": {k: r_vs_dollars([x for x in items if x["score"] >= v]) for k, v in tiers.items()},
-        "risk_audit": {
-            k: risk_audit([x for x in items if x["score"] >= v], lim["per_trade"], lim["daily_loss"], lim["max_dd"])
+        "views": views,
+        "opportunity_counts": {
+            k: {
+                "strategy_detections": sum(1 for x in detections if x["score"] >= v),
+                "unique_opportunities": sum(1 for e in events if e["score"] >= v),
+                "multi_strategy_opportunities": sum(1 for e in events if e["score"] >= v and e["detections"] > 1),
+                "risk_eligible": sum(1 for e in eligible if e["score"] >= v),
+                "risk_ineligible": sum(1 for e in events if e["score"] >= v and e not in eligible),
+                "one_position_at_a_time": sum(1 for e in seq_all if e["score"] >= v),
+                "risk_eligible_one_position": sum(1 for e in seq_eligible if e["score"] >= v),
+            }
             for k, v in tiers.items()
         },
-        "trades_4_of_5_or_better": [_row(x) for x in items if x["score"] >= 4],
+        "inconsistent_opportunities": [e["opportunity_id"] for e in events if not e["consistent"]],
+        "duplicate_examples": [
+            {**_row(e), "opportunity_id": e["opportunity_id"], "strategies": e["strategies"]}
+            for e in events
+            if e["detections"] > 1
+        ][:50],
+        "r_vs_dollars": {k: r_vs_dollars([e for e in events if e["score"] >= v]) for k, v in tiers.items()},
+        "risk_audit": {
+            k: {
+                "unique_opportunities": risk_audit(
+                    [e for e in events if e["score"] >= v], lim["per_trade"], lim["daily_loss"], lim["max_dd"]
+                ),
+                "risk_eligible_one_position": risk_audit(
+                    [e for e in seq_eligible if e["score"] >= v], lim["per_trade"], lim["daily_loss"], lim["max_dd"]
+                ),
+                "exposure_if_every_detection_executed": signal_tracker.exposure(
+                    [x for x in detections if x["score"] >= v]
+                ),
+                "exposure_unique_opportunities": signal_tracker.exposure([e for e in events if e["score"] >= v]),
+            }
+            for k, v in tiers.items()
+        },
+        "three_of_five_verdict": _verdict_3(views),
+        "trades_4_of_5_or_better": [
+            {**_row(e), "opportunity_id": e["opportunity_id"], "strategies": e["strategies"]}
+            for e in events
+            if e["score"] >= 4
+        ],
         "notes": [
             "Development period only; the previously inspected holdout is excluded.",
             "Calendar/data gates are not reconstructed for history; news exposure is a breakdown, not a filter.",
@@ -326,67 +387,94 @@ def run(
     }
 
 
+VIEW_TITLES = {
+    "strategy_detections": "Strategy-level detections (one row per strategy; the same opportunity can repeat)",
+    "unique_opportunities": "Unique market opportunities (combined performance; each opportunity once)",
+    "one_position_at_a_time": "Executable: one position at a time",
+    "risk_eligible_one_position": "Executable and risk-eligible (planned risk <= limit), one position at a time",
+}
+
+
+def _table(cmp: dict[str, Any]) -> list[str]:
+    out = [
+        "| Threshold | Signals | Resolved | Win rate (95% CI) | Avg win | Avg loss | $/trade (95% CI) | PF | Max DD "
+        "| Max loss streak | Avg R |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for name, t in cmp["tiers"].items():
+        out.append(
+            f"| {name} | {t['signals']} | {t['resolved']} | {t['win_rate']} {t['win_rate_ci95']} | {t['avg_win']} | "
+            f"{t['avg_loss']} | {t['expectancy']} {t['expectancy_ci']} | {t['profit_factor']} | {t['max_drawdown']} | "
+            f"{t['max_consecutive_losses']} | {t['avg_r']} |"
+        )
+    return [*out, "", f"Verdict: {cmp['verdict']}", ""]
+
+
 def to_markdown(r: dict[str, Any]) -> str:
     if "error" in r:
         return f"# Confluence threshold study - {r['symbol']}\n\n{r['error']}\n"
+    p = r["period"]
     lines = [
-        f"# Confluence threshold study - {r['symbol']}",
+        f"# Confluence threshold study - {r['symbol']} ({r['engine_version']})",
         "",
-        f"Development sessions {r['period']['first']} .. {r['period']['last']} ({r['period']['sessions']}); "
-        f"final holdout excluded ({r['period']['excluded_holdout_sessions']} sessions).",
+        f"Development sessions {p['first']} .. {p['last']} ({p['sessions']}); {p['excluded_holdout_sessions']} "
+        f"holdout sessions excluded (stored study holdout start: {p.get('stored_study_holdout_start')}).",
         "",
         f"Funnel: {r['funnel']}",
-        f"Scores: {r['score_counts']}",
-        "",
-        "| Threshold | Resolved | Win rate (95% CI) | Avg win | Avg loss | $/trade (95% CI) | PF | Max DD "
-        "| Max loss streak | Avg R |",
-        "|---|---|---|---|---|---|---|---|---|---|",
-    ]
-    for name, t in r["comparison"]["tiers"].items():
-        lines.append(
-            f"| {name} | {t['resolved']} | {t['win_rate']} {t['win_rate_ci95']} | {t['avg_win']} | {t['avg_loss']} | "
-            f"{t['expectancy']} {t['expectancy_ci']} | {t['profit_factor']} | {t['max_drawdown']} | "
-            f"{t['max_consecutive_losses']} | {t['avg_r']} |"
-        )
-    lines += [
-        "",
-        "Rejections (first reason): " + ", ".join(f"{k} {r['funnel'][k]}" for k in REJECTIONS),
         "Rejections (non-exclusive): " + str(r["rejections_nonexclusive"]),
         "Factor pass rates: " + ", ".join(f"{k} {v['pass_rate']:.0%}" for k, v in r["factor_pass_rates"].items()),
         f"Score distribution (all candidates): {r['score_distribution_all_candidates']}",
         "",
+        "## Distinct opportunity counts",
+        "",
+        "| Threshold | Strategy detections | Unique opportunities | Multi-strategy | Risk-eligible | Risk-ineligible "
+        "| One at a time | Eligible, one at a time |",
+        "|---|---|---|---|---|---|---|---|",
     ]
+    for k, c in r["opportunity_counts"].items():
+        lines.append(
+            f"| {k} | {c['strategy_detections']} | {c['unique_opportunities']} | {c['multi_strategy_opportunities']} | "
+            f"{c['risk_eligible']} | {c['risk_ineligible']} | {c['one_position_at_a_time']} | "
+            f"{c['risk_eligible_one_position']} |"
+        )
+    if r["inconsistent_opportunities"]:
+        lines += ["", f"WARNING: inconsistent outcomes within opportunities: {r['inconsistent_opportunities']}"]
+    for key, title in VIEW_TITLES.items():
+        lines += ["", f"## {title}", "", *_table(r["views"][key])]
+    lines += ["## Risk (limit per trade, daily loss, max drawdown from the configured rule profile)", ""]
     for k, ra in r["risk_audit"].items():
+        u, e = ra["unique_opportunities"], ra["risk_eligible_one_position"]
+        x1, x2 = ra["exposure_if_every_detection_executed"], ra["exposure_unique_opportunities"]
         rv = r["r_vs_dollars"].get(k) or {}
         lines.append(
-            f"- {k}: planned risk median ${ra['median_planned_risk_usd']}, max ${ra['max_planned_risk_usd']}; "
-            f"{ra['trades_over_planned_risk_limit']} trade(s) over ${ra['per_trade_limit_usd']:.0f}; "
-            f"{ra['trades_losing_more_than_planned']} lost more than planned (gaps); closed-P&L max DD "
-            f"${ra['closed_pnl_max_drawdown_usd']} (limit ${ra['max_drawdown_usd']}, first breach "
-            f"{ra['drawdown_limit_first_breached_at']}); daily-loss breaches "
-            f"{len(ra['daily_loss_limit_breach_days'])}. "
-            f"Mean ${rv.get('mean_usd')} vs mean R {rv.get('mean_r')}: avg planned risk winners "
-            f"${rv.get('avg_planned_risk_winners_usd')} vs losers ${rv.get('avg_planned_risk_losers_usd')}."
+            f"- {k}: unique opportunities - {u['trades_over_planned_risk_limit']} over ${u['per_trade_limit_usd']:.0f} "
+            f"planned risk (max ${u['max_planned_risk_usd']}, median ${u['median_planned_risk_usd']}), "
+            f"{u['trades_losing_more_than_planned']} lost more than planned, "
+            f"max DD ${u['closed_pnl_max_drawdown_usd']} "
+            f"(limit ${u['max_drawdown_usd']}, first breach {u['drawdown_limit_first_breached_at']}), "
+            f"{len(u['daily_loss_limit_breach_days'])} daily-loss breach days. Risk-eligible one at a time - max DD "
+            f"${e['closed_pnl_max_drawdown_usd']}, first breach {e['drawdown_limit_first_breached_at']}, "
+            f"{len(e['daily_loss_limit_breach_days'])} daily-loss breach days. If every detection were executed: "
+            f"{x1['max_concurrent_positions']} concurrent positions, ${x1['max_concurrent_planned_risk_usd']} planned "
+            f"risk at once (unique: {x2['max_concurrent_positions']}, ${x2['max_concurrent_planned_risk_usd']}). "
+            f"Mean ${rv.get('mean_usd')} vs mean R {rv.get('mean_r')} (winners' avg risk "
+            f"${rv.get('avg_planned_risk_winners_usd')}, losers' ${rv.get('avg_planned_risk_losers_usd')})."
         )
     lines += [
         "",
-        "## Every 4/5+ trade",
+        f"**3/5 after removing duplicates and risk-ineligible opportunities:** {r['three_of_five_verdict']}",
         "",
-        "| Signal (ET) | Strategy | Score | Dir | Entry | Stop | TP1 | TP2 | Risk $ | Outcome | $ | R |",
+        "## Every 4/5+ opportunity",
+        "",
+        "| Signal (ET) | Strategies | Score | Dir | Entry | Stop | TP1 | TP2 | Risk $ | Outcome | $ | R |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for t in r["trades_4_of_5_or_better"]:
         lines.append(
-            f"| {t['signal_time_et']} | {t['strategy']} | {t['score']} | {t['direction']} | {t['entry']} | "
+            f"| {t['signal_time_et']} | {', '.join(t['strategies'])} | {t['score']} | {t['direction']} | "
+            f"{t['entry']} | "
             f"{t['stop']} | {t['tp1']} | {t['tp2']} | {t['planned_risk_usd']} | {t['outcome'] or t['status']} | "
             f"{t['outcome_usd']} | {t['outcome_r']} |"
         )
-    lines += [
-        "",
-        f"**Verdict:** {r['comparison']['verdict']}",
-        "",
-        r["comparison"]["method"],
-        "",
-        r["comparison"]["caveat"],
-    ]
+    lines += ["", r["comparison"]["method"], "", r["comparison"]["caveat"]]
     return "\n".join(lines) + "\n"
