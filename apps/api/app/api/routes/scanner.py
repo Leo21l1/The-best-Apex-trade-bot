@@ -60,8 +60,26 @@ async def radar(_: CurrentUser) -> dict[str, Any]:
 
 
 def _signal_out(row: SignalRow) -> dict[str, Any]:
+    # Core fields come from the row's own columns, so a row whose detail payload is incomplete
+    # (older or hand-made records) cannot break the whole leaderboard.
+    core = {
+        "symbol": row.symbol,
+        "strategy_id": row.strategy_id,
+        "direction": row.direction,
+        "quality": row.quality,
+        "provider": row.provider,
+        "bar_ts": row.bar_ts.isoformat(),
+        "entry": row.entry,
+        "entry_low": row.entry_low,
+        "entry_high": row.entry_high,
+        "stop": row.stop,
+        "targets": row.targets,
+        "score": row.score,
+    }
     return {
-        **row.detail,
+        **core,
+        **(row.detail or {}),
+        **{k: v for k, v in core.items() if k in ("symbol", "strategy_id", "direction", "quality", "provider")},
         "id": row.id,
         "status": row.status,
         "created_at": row.created_at.isoformat(),

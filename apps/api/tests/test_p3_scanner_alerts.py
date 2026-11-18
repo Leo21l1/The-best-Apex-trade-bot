@@ -239,3 +239,31 @@ def test_websocket_pushes_alerts_to_every_client() -> None:
                 frame = ws.receive_json()
             assert frame["topic"] == "alerts" and frame["data"]["kind"] == "data_feed"
     publisher.close()
+
+
+async def test_opportunities_survive_a_signal_row_with_incomplete_detail(admin_client: httpx.AsyncClient) -> None:
+    """Regression (audit): one row whose detail lacked 'symbol' made /api/opportunities return 500."""
+    get_settings().market_data_provider = "simulated"
+    async with get_sessionmaker()() as s:
+        s.add(
+            SignalRow(
+                provider="simulated",
+                quality="simulated",
+                strategy_id="vwap_trend",
+                symbol="ES",
+                direction="long",
+                bar_ts=datetime.now(UTC) - timedelta(minutes=5),
+                entry=5000.0,
+                entry_low=4999.0,
+                entry_high=5001.0,
+                stop=4995.0,
+                targets=[5010.0],
+                score=1.0,
+                detail={"note": "hand-made row"},
+            )
+        )
+        await s.commit()
+    r = await admin_client.get("/api/opportunities")
+    assert r.status_code == 200, r.text
+    c = r.json()["candidates"][0]
+    assert c["symbol"] == "ES" and c["stop"] == 4995.0 and c["rank_blockers"]
