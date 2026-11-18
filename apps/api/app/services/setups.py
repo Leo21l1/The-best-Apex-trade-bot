@@ -45,7 +45,7 @@ MANDATORY: dict[str, tuple[int, ...]] = {
     "smc_fvg_retest": (4,),
 }
 #: Bumped whenever factor or level rules change, and stored with every recorded signal.
-ENGINE_VERSION = "setups-1.0"
+ENGINE_VERSION = "setups-1.1"
 STATES = (
     "WAIT",
     "DEVELOPING BUY",
@@ -79,6 +79,15 @@ def _f(n: int, status: str, detail: str, event: str | None = None) -> dict[str, 
 
 def _recent(iso: str | None, now: datetime, minutes: int) -> bool:
     return bool(iso) and datetime.fromisoformat(iso) >= now - timedelta(minutes=minutes)  # type: ignore[arg-type]
+
+
+def _same_break(lv: dict[str, Any], structure: dict[str, Any], tick: float) -> bool:
+    """True when a liquidity acceptance and the factor-2 structure break are the same market event: the
+    same level (within 2 ticks) broken within 15 minutes. One event must not count twice."""
+    if structure["status"] != "PASS" or structure.get("level") is None or not lv.get("state_at"):
+        return False
+    dt = abs((datetime.fromisoformat(lv["state_at"]) - datetime.fromisoformat(structure["event_time"])).total_seconds())
+    return abs(lv["price"] - structure["level"]) <= 2 * tick and dt <= 900
 
 
 def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any]]:
@@ -134,6 +143,7 @@ def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any
                 f"structure:{ev['tf']}:{ev['time']}",
             )
         )
+        out[-1].update(level=ev["level"], event_time=ev["time"])
     else:
         out.append(
             _f(
@@ -181,6 +191,16 @@ def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any
                     f"{want_sweep.capitalize()} liquidity at {lv['label']} {lv['price']:g} swept "
                     "and reclaimed (failed breakout).",
                     f"liquidity:{lv['label']}:{lv.get('state_at')}",
+                )
+            )
+        elif acc and not against and _same_break(acc[-1], out[1], doc["tick_size"]):
+            lv = acc[-1]
+            out.append(
+                _f(
+                    3,
+                    "FAIL",
+                    f"Acceptance beyond {lv['label']} {lv['price']:g} is the same close that broke "
+                    "structure (already counted under market structure).",
                 )
             )
         elif acc and not against:

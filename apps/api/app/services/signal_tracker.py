@@ -82,6 +82,13 @@ def simulate(sig: dict[str, Any], bars: Sequence[Bar], missed_r: float = 0.5) ->
                 return out
             continue
         if (b.low <= stop) if long else (b.high >= stop):
+            if (b.open < stop) if long else (b.open > stop):
+                # Gapped through the stop: the stop market order fills at the open, not at the stop price.
+                usd = (b.open - entry) * s * pv - costs
+                out.update(
+                    outcome="stop", outcome_at=b.ts, outcome_r=round(usd / net_risk, 3), outcome_usd=round(usd, 2)
+                )
+                return out
             out.update(outcome="stop", outcome_at=b.ts, outcome_r=-1.0, outcome_usd=round(-net_risk, 2))
             return out
         if (b.high >= tp1 + tick) if long else (b.low <= tp1 - tick):

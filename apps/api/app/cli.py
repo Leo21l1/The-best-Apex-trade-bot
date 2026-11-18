@@ -323,7 +323,16 @@ async def confluence_study_cmd(symbol: str, days: int, holdout: int, out_dir: st
         min_net_rr=s.min_net_reward_risk, expiry_minutes=s.signal_expiry_minutes, costs=_cost_cfg()
     )
     print(f"Running on {len(bars):,} stored 1-minute bars of {symbol}; this can take several minutes...")
-    res = cs.run(symbol, bars, d1, holdout_sessions=holdout, events=evs, cfg=cfg)
+    from app.risk.profile import load_rules, to_ruleset
+    from app.services.research_study import latest
+
+    async with get_sessionmaker()() as session:
+        rules = to_ruleset(await load_rules(session))
+        study = await latest(session, symbol)
+    hs = ((study.result.get("plan") or {}).get("holdout") or [None])[0] if study else None
+    limits = {"per_trade": 1000.0, "daily_loss": float(rules.daily_loss_limit), "max_dd": float(rules.max_drawdown)}
+    print(f"Excluding the stored research study's holdout from {hs or 'n/a'} and the last {holdout} sessions.")
+    res = cs.run(symbol, bars, d1, holdout_sessions=holdout, holdout_start=hs, events=evs, cfg=cfg, risk_limits=limits)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     (out / f"confluence_study_{symbol}.json").write_text(json.dumps(res, indent=2, default=str))

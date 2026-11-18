@@ -207,3 +207,30 @@ only from `source_sync_state.last_success_at`, the last successful download. A s
 is reported as STALE / UNAVAILABLE (FAIL) and blocks setup confirmation. Any sync failure, including a
 database error, is recorded with exponential backoff, so a failure can never turn into a 60-second retry
 loop.
+
+## Confluence study audit (engine setups-1.1)
+
+Verified and fixed:
+1. **Gap through stop.** A bar opening beyond the stop was booked at the stop price, which was optimistic.
+   It is now booked at the open, so the loss can exceed the planned risk. Such trades are reported as
+   "lost more than planned".
+2. **Double count.** "Accepted beyond liquidity" (factor 3) at the same level, within 15 minutes, as
+   the structure break counted in factor 2 is the same market event. It now counts once.
+3. **Holdout.** "Last 50 sessions" moved forward as new data arrived, which put the first days of the
+   previously inspected holdout back into development. The study now also excludes everything from
+   the stored research study's holdout start date.
+
+Verified as correct (with tests):
+* Levels use only bars that opened before the signal close, and completed daily bars only.
+* Stops are rounded away from the entry and targets toward it, on the tick grid.
+* Commission is charged per side (standard $2.50, micro $0.60) with 1 tick of slippage on the entry
+  and on stop/market exits; no slippage on target limits.
+* For every trade, $ = R × planned risk. Mean $ and mean R can have opposite signs when winners and
+  losers have different planned risk. That is risk weighting, not an error. The study prints the
+  average planned risk of winners vs losers and checks the identity.
+
+Reported, not hidden:
+* The study is 1 contract per trade with no risk cap.
+* Every trade whose planned risk exceeds $1,000 is listed, as is every trade that lost more than planned.
+* The closed-P&L drawdown, the first breach of the configured maximum drawdown and the days breaching
+  the daily loss limit are all reported.
