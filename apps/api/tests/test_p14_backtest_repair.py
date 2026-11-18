@@ -254,7 +254,7 @@ async def test_worker_exits_nonzero_when_a_long_running_task_crashes(monkeypatch
             await stop.wait()
 
     monkeypatch.setattr(wm, "start_ingestion", lambda stop: asyncio.create_task(boom(stop)))
-    for name in ("calendar_sync", "forexfactory_sync", "lab_jobs", "news_poll"):
+    for name in ("calendar_sync", "forexfactory_sync", "lab_jobs", "news_poll", "autopilot_loop"):
         monkeypatch.setattr(wm, name, idle)
     monkeypatch.setattr(wm, "ScannerService", Scanner)
     monkeypatch.setattr(wm, "HEARTBEAT_INTERVAL_S", 0.05)

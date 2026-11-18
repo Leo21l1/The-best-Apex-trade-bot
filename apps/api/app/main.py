@@ -15,6 +15,7 @@ from app.api.deps import rate_limit_key
 from app.api.routes import (
     account,
     auth,
+    autopilot,
     broker,
     confirmation,
     copilot,
@@ -146,6 +147,7 @@ def create_app() -> FastAPI:
     app.include_router(data.router, prefix="/api")
     app.include_router(confirmation.router, prefix="/api")
     app.include_router(research.router, prefix="/api")
+    app.include_router(autopilot.router, prefix="/api")
     app.include_router(news.router, prefix="/api")
     app.include_router(integrations.router, prefix="/api")
     app.include_router(broker.router, prefix="/api")

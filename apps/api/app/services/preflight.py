@@ -194,6 +194,37 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
             "API key configured" if s.anthropic_api_key else "not configured (optional)",
         )
     )
-    out.append(_line("Order execution", "PASS", "analysis only: no broker order routing exists in this application"))
+    from app.services.autopilot import killed
+
+    k = await killed()
+    out.append(
+        _line(
+            "Automation mode",
+            "PASS",
+            f"{s.automation_mode}"
+            + (
+                " (scan + alerts only, no orders)"
+                if s.automation_mode == "APEX_MANUAL"
+                else " (simulated orders on a separate paper account)"
+                if s.automation_mode == "AUTONOMOUS_PAPER"
+                else " (real-money gate: refused unless every requirement passes)"
+            )
+            + (f"; KILL SWITCH ON since {k.get('at')}" if k else ""),
+        )
+    )
+    out.append(
+        _line(
+            "Phone notifications",
+            "PASS" if s.notify_provider != "none" else "WARN",
+            s.notify_provider if s.notify_provider != "none" else "not configured (APEX_NOTIFY_PROVIDER)",
+        )
+    )
+    out.append(
+        _line(
+            "Order execution",
+            "PASS",
+            "no broker order routing is implemented; Apex accounts can never be traded automatically",
+        )
+    )
     ok = not any(x["result"] == "FAIL" for x in out)
     return {"checks": out, "ok": ok, "at": now.isoformat(), "ny_time": now.astimezone(ET).strftime("%Y-%m-%d %H:%M %Z")}

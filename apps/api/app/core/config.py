@@ -114,6 +114,35 @@ class Settings(BaseSettings):
     #: and explains which evidence is missing. Turning this off is a deliberate decision.
     require_validated_strategy: bool = True
 
+    # --- Automation (see docs/automation.md) -------------------------------------------------------
+    #: APEX_MANUAL: scan + alerts only, never any order. AUTONOMOUS_PAPER: also trades a separate,
+    #: simulated "Autonomous paper" account. AUTHORIZED_BROKER: real execution on a separately
+    #: identified non-Apex brokerage account - always refused unless every gate passes (and no broker
+    #: adapter is implemented, so today it is always refused).
+    automation_mode: Literal["APEX_MANUAL", "AUTONOMOUS_PAPER", "AUTHORIZED_BROKER"] = "APEX_MANUAL"
+    #: Pre-registered research configurations the autopilot may trade: SYMBOL:strategy_id:config.
+    autopilot_strategies: list[str] = Field(
+        default_factory=lambda: ["ES:mtf_trend:t1_all", "NQ:breakout_retest:t2_all"]
+    )
+    autopilot_contracts: int = Field(default=1, ge=1, le=2)  # fixed size: never scaled up after losses
+    autopilot_max_risk_per_trade: float = Field(default=500.0, gt=0)  # 1-contract loss at stop incl. costs
+    autopilot_signal_max_age_minutes: int = Field(default=10, ge=1, le=60)
+    #: Broker gate inputs (AUTHORIZED_BROKER). The account type must explicitly allow algorithmic trading
+    #: and can never be an Apex Trader Funding evaluation/funded account.
+    broker_adapter: str = ""
+    broker_account_type: str = ""
+    broker_live_enabled: bool = False
+
+    # --- Phone notifications ----------------------------------------------------------------------
+    notify_provider: Literal["none", "ntfy", "pushover", "telegram"] = "none"
+    notify_min_severity: Literal["info", "warning", "critical"] = "info"
+    notify_ntfy_url: str = ""  # e.g. https://ntfy.sh/<long-random-topic>
+    notify_ntfy_token: SecretStr | None = None
+    notify_pushover_token: SecretStr | None = None
+    notify_pushover_user: SecretStr | None = None
+    notify_telegram_bot_token: SecretStr | None = None
+    notify_telegram_chat_id: str = ""
+
     # Risk (Phase 4)
     # An account snapshot older than this while the market is open is treated as stale.
     account_stale_minutes: int = Field(default=30, ge=1)

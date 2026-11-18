@@ -33,9 +33,11 @@ async def config_from_rules(session: AsyncSession, settings: Settings) -> PaperC
 
 async def get_account(session: AsyncSession, settings: Settings) -> PaperAccount:
     """The single paper account for the configured data provider (created on first use)."""
+    from app.services.autopilot import AUTO_ACCOUNT
+
     acct = await session.scalar(
         select(PaperAccount)
-        .where(PaperAccount.provider == settings.market_data_provider)
+        .where(PaperAccount.provider == settings.market_data_provider, PaperAccount.name != AUTO_ACCOUNT)
         .order_by(PaperAccount.id)
         .limit(1)
     )
@@ -102,7 +104,14 @@ async def process(session: AsyncSession, acct: PaperAccount, now: datetime) -> i
 
 
 async def journal_closed(session: AsyncSession, acct: PaperAccount) -> None:
-    """Copy closed paper round trips into the journal (idempotent by source key)."""
+    """Copy closed paper round trips into the journal (idempotent by source key).
+
+    The autopilot's "Autonomous paper" account is not journaled: the journal is for your own trades;
+    autonomous simulated history is reported by the autopilot (GET /api/autopilot)."""
+    from app.services.autopilot import AUTO_ACCOUNT
+
+    if acct.name == AUTO_ACCOUNT:
+        return
     for c in acct.state["closed"]:
         exit_t = datetime.fromisoformat(c["exit_time"])
         stmt = (

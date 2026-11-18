@@ -684,6 +684,34 @@ async def preflight_cmd(symbols: list[str]) -> int:
     return 0 if rep["ok"] else 1
 
 
+async def autopilot_cmd(action: str) -> int:
+    """Autopilot status / kill switch / notification test."""
+    import json
+
+    from app.services import autopilot, notify
+
+    if action == "kill":
+        await autopilot.kill(True, "cli")
+        print("Kill switch ON: no new entries; working simulated orders are cancelled and positions flattened.")
+        return 0
+    if action == "resume":
+        await autopilot.kill(False, "cli")
+        print("Kill switch OFF.")
+        return 0
+    if action == "notify-test":
+        ok = await notify.send(
+            "PROJECT APEX test notification", "If you can read this on your phone, alerts work.", "warning"
+        )
+        print(
+            "Notification sent." if ok else "Notification NOT sent: check APEX_NOTIFY_* settings and the worker logs."
+        )
+        return 0 if ok else 1
+    async with get_sessionmaker()() as session:
+        rep = await autopilot.report(session)
+    print(json.dumps(rep, indent=1, default=str))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="apex")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -714,6 +742,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also re-request sessions downloaded before that are still incomplete (shown in the estimate)",
     )
+    ap = sub.add_parser("autopilot", help="Autopilot status, kill switch and notification test")
+    ap.add_argument("action", choices=["status", "kill", "resume", "notify-test"])
     pf = sub.add_parser("preflight", help="Morning readiness report (read-only): services, live data, risk, news")
     pf.add_argument("--symbols", default="ES,NQ")
     si = sub.add_parser("strategy-inventory", help="Write the strategy inventory (generated from the code)")
@@ -765,6 +795,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.accept_unknown_cost,
                     args.include_partial,
                 )
+            if args.cmd == "autopilot":
+                return await autopilot_cmd(args.action)
             if args.cmd == "preflight":
                 return await preflight_cmd([x.strip().upper() for x in args.symbols.split(",") if x.strip()])
             if args.cmd == "strategy-inventory":

@@ -28,6 +28,10 @@ ALERT_KINDS = {
     "strategy_degraded",
     "entry_reached",
     "news",
+    "auto_trade",
+    "auto_halt",
+    "kill_switch",
+    "broker_gate",
 }
 
 
@@ -88,4 +92,8 @@ async def emit_alert(
         await redis.publish(ALERT_CHANNEL, json.dumps(alert_to_wire(row)))
     except (RedisError, OSError):
         log_event(log, "alert publish failed", level=logging.WARNING)
+    from app.services import notify
+
+    if notify.enabled():
+        await notify.send(row.title, row.body, row.severity)  # never raises; short timeout
     return row

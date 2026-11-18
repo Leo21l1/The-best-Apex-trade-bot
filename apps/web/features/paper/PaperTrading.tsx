@@ -7,6 +7,7 @@ import { Callout, cx, Panel, Stat } from "@/components/ui/primitives";
 import { api, ApiError } from "@/lib/api";
 import { formatEt } from "@/lib/format";
 import { money } from "@/lib/money";
+import { AutopilotPanel } from "./Autopilot";
 
 const SYMBOLS = ["ES", "MES", "NQ", "MNQ", "YM", "MYM", "RTY", "M2K", "CL", "MCL", "GC", "MGC"];
 const input = "w-full rounded-md border border-line bg-panel-2 px-2.5 py-1.5 text-sm font-mono outline-none focus:border-accent";
@@ -67,6 +68,7 @@ export function PaperTrading() {
   return (
     <>
       <PageHeader path="/paper" />
+      <div className="mb-4"><AutopilotPanel /></div>
       <div className="mb-4 space-y-3">
         <Callout tone="info" title="Isolated simulator">
           {st?.notice ?? "Simulated account."} Orders fill against stored market data with conservative rules (next-bar

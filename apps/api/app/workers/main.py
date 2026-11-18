@@ -269,6 +269,29 @@ async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
 failed_task: list[str] = []
 
 
+async def autopilot_loop(stop: asyncio.Event, interval_s: float = 15.0) -> None:
+    """Autopilot cycles (no-op in APEX_MANUAL). Errors are logged and retried; never fatal."""
+    from app.services import autopilot
+
+    s = get_settings()
+    log_event(log, "autopilot mode", mode=s.automation_mode)
+    if s.automation_mode == "APEX_MANUAL":
+        await stop.wait()
+        return
+    sm = get_sessionmaker()
+    while not stop.is_set():
+        try:
+            async with sm() as session:
+                autopilot.log_cycle(await autopilot.cycle(session))
+                await session.commit()
+        except Exception:
+            log.exception("autopilot cycle failed")
+        try:
+            await asyncio.wait_for(stop.wait(), interval_s)
+        except TimeoutError:
+            pass
+
+
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
@@ -276,6 +299,7 @@ async def run(stop: asyncio.Event) -> None:
     ff = asyncio.create_task(forexfactory_sync(stop))
     lab = asyncio.create_task(lab_jobs(stop))
     news = asyncio.create_task(news_poll(stop))
+    auto = asyncio.create_task(autopilot_loop(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
     named = {
         "ingestion": ingestion,
@@ -284,6 +308,7 @@ async def run(stop: asyncio.Event) -> None:
         "forexfactory": ff,
         "lab": lab,
         "news": news,
+        "autopilot": auto,
     }
     while not stop.is_set():
         # Supervision: a long-running task that ends while the worker is running means something broke.
@@ -311,7 +336,7 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    tasks = {t for t in (ingestion, scanner, calendar, ff, lab, news) if t is not None}
+    tasks = {t for t in (ingestion, scanner, calendar, ff, lab, news, auto) if t is not None}
     await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if not t.done():
