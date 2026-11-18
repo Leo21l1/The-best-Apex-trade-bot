@@ -3,29 +3,24 @@
 An analysis-only futures trading intelligence workstation for an Apex Trader Funding
 $50K End-of-Day (EOD) Evaluation traded manually on Tradovate.
 
-> **Execution policy.** PROJECT APEX never places, cancels or modifies live orders and contains no
-> live order-routing path. This is enforced by `apps/api/app/core/execution_guard.py` and by
+> **Execution policy.** PROJECT APEX is analysis only: no broker connection, and it never places,
+> cancels or modifies orders. It contains no live order-routing path. This is enforced by `apps/api/app/core/execution_guard.py` and by
 > automated tests (`apps/api/tests/test_execution_safety.py`). Every order is placed manually by
 > the trader. Risk figures are advisory and cannot guarantee protection against account failure.
 
 ## What it does
 
-| Area | What you get |
+Three functions, three tabs at http://localhost:3000:
+
+| Tab | What you get |
 |---|---|
-| Market data | Provider-independent adapters; every price labelled live / delayed / historical / simulated / unavailable with provider and timestamp; validation, duplicate protection, gap detection, freshness monitoring; candles on nine timeframes |
-| Market Radar | Trend, RSI, ATR and relative volume per timeframe; regime; VWAP; prior-day, overnight and opening-range levels; watchlist |
-| Strategies A–K | Opening range breakout, VWAP trend, liquidity sweep reversal, breakout-retest, momentum pullback, volatility expansion, mean reversion, multi-timeframe trend, plus SMC setups (sweep + structure shift, order-block retest, FVG retest): written specifications and mathematically defined, explainable rules |
-| Smart Money Analysis | Causal detectors for swings, BOS/CHoCH/MSS, equal highs/lows, liquidity sweeps (candidate / rejection / continuation / invalidated), order blocks, FVG and inverse FVG with fill tracking, supply/demand, breakout-retest, divergence; drawn on the chart with a pattern inspector, liquidity map, multi-timeframe confluence (BUY BIAS / SHORT BIAS / WAIT / NO TRADE) and an all-instrument setup scan |
-| News | Official Federal Reserve and EIA RSS feeds: publication vs detection time, rule-based impact (LOW–CRITICAL), dedupe, clustering, observed reaction, alerts, chart markers and a ticker. No breaking-news wire is connected (needs a licensed provider) |
-| Opportunities | Explainable candidates with entry zone, stop, targets, costs and itemised setup score; ranked only when the strategy is validated, data is real, rules are verified and the risk check passes (zero is a valid result) |
-| Apex Risk Guardian | Rule profile with per-rule verification records; EOD drawdown (not intraday trailing), daily loss, risk budget, contract exposure with micros; six-output trade checks |
-| Account data | Manual snapshots and CSV import of end-of-day balances (no broker connection) |
-| AI copilot | Claude with read-only tools; answers split into verified data / estimates / interpretation / missing information, with every tool call shown |
-| Economic calendar | Official `.ics` import, manual entry, event windows, alerts and news exposure |
-| Backtesting | Event-driven replay of the live strategy code; conservative fills; IS/OOS, walk-forward, Monte Carlo, sensitivity, multiple-testing accounting; reproducible, fingerprinted experiments |
-| Paper trading | Isolated simulator with market/limit/stop/bracket orders, partial fills, slippage, commissions and Apex-style limits |
-| Journal and analytics | Tradovate CSV import, tagging, planned vs actual, daily/weekly/monthly reports, mistake analysis, rule checks |
-| Operations | Alerts with dedupe and cooldowns, session briefing, System Health, audit log, admin/viewer roles |
+| **Market Analyzer** | ES, NQ and MNQ cards: price with age and feed status, BULLISH / BEARISH / NEUTRAL / WAIT bias, session, key structure, nearest liquidity, active setup, setup quality (a checklist score, not a probability) and news status. Click a card for: one-sentence bias, what's happening now, important levels (FVGs, order blocks, PDH/PDL, weekly/monthly, overnight, equal highs/lows with approaching / breached / swept-and-reclaimed / accepted states), potential setup with gross and net R:R, or the concrete reasons to wait; a clean chart with optional overlays; advanced 12-factor confluence and the 11 strategies grouped into 4 families. |
+| **News** | ForexFactory USD calendar in Eastern time, re-evaluated every 60 s: HIGH IMPACT UPCOMING / NEWS WINDOW ACTIVE / POST-NEWS VOLATILITY / NO MAJOR SCHEDULED EVENT NEARBY / NEWS DATA STALE, countdown to the next high-impact event, forecast and previous as published, and the time of the last successful download. |
+| **Trading Journal** | Record the trades you place yourself (scaled entries and partial exits supported), fees kept separate, net P&L, R, win rate, profit factor, expectancy, drawdown, streaks, calendar and by-strategy / instrument / hour reports, mistakes and discipline notes, screenshots, CSV import. |
+
+Settings, health and the advanced research tools are behind the gear icon. Everything is computed
+deterministically from stored closed candles; the optional AI copilot only explains those results.
+Definitions, the LuxAlgo comparison and the look-ahead safeguards: [docs/smc-engine.md](docs/smc-engine.md).
 
 ## Status
 

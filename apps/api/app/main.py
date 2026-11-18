@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from app.api.deps import rate_limit_key
 from app.api.routes import (
     account,
+    analyzer,
     auth,
     autopilot,
     broker,
@@ -147,6 +148,7 @@ def create_app() -> FastAPI:
     app.include_router(data.router, prefix="/api")
     app.include_router(confirmation.router, prefix="/api")
     app.include_router(research.router, prefix="/api")
+    app.include_router(analyzer.router, prefix="/api")
     app.include_router(autopilot.router, prefix="/api")
     app.include_router(news.router, prefix="/api")
     app.include_router(integrations.router, prefix="/api")

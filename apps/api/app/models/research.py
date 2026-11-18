@@ -97,6 +97,9 @@ class JournalTrade(Base):
     emotion_tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     lessons: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    #: Individual executions for scaled entries / partial exits: [{"time", "side": "entry"|"exit", "qty", "price"}].
+    #: When present, entry/exit prices are the quantity-weighted averages of these fills.
+    fills: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     chart_links: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     # --- provenance of manual corrections ---
     #: Execution fields exactly as first recorded (import / manual entry / simulator). Written once,

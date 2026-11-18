@@ -56,7 +56,7 @@ async def _clean_state() -> AsyncIterator[None]:
                 "TRUNCATE backtest_runs, research_studies, paper_accounts, journal_trades, journal_edits, trade_plans, "
                 "news_items, "
                 "copilot_exchanges, "
-                "economic_events, "
+                "economic_events, source_sync_state, "
                 "account_snapshots, rules, alerts, signals, "
                 "candles, audit_logs, users "
                 "RESTART IDENTITY CASCADE"

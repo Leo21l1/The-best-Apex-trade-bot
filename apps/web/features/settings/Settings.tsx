@@ -6,7 +6,10 @@ import { IntegrationTests } from "./IntegrationTests";
 import { useSession } from "@/hooks/useSession";
 import { useSystemStatus } from "@/hooks/useSystemStatus";
 import { humanizeComponent } from "@/lib/format";
+import { ADVANCED, NAV } from "@/lib/nav";
 import { TRADER_PROFILE } from "@/lib/profile";
+import Link from "next/link";
+import { DataReadinessPanel } from "@/features/system/DataReadiness";
 import { ChangePassword, Users } from "./Security";
 
 const INTEGRATIONS = ["market_data", "tradovate_readonly", "ai_copilot", "apex_rule_profile"];
@@ -22,13 +25,12 @@ export function Settings() {
         <Panel title="Execution safety">
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between"><dt className="text-muted">Execution mode</dt><dd className="font-mono">ANALYSIS_ONLY (locked)</dd></div>
-            <div className="flex justify-between"><dt className="text-muted">Live order routing</dt><dd className="font-mono">Not implemented</dd></div>
-            <div className="flex justify-between"><dt className="text-muted">Paper trading</dt><dd className="font-mono">Isolated simulator</dd></div>
+            <div className="flex justify-between"><dt className="text-muted">Broker connection</dt><dd className="font-mono">None</dd></div>
+            <div className="flex justify-between"><dt className="text-muted">Order submission</dt><dd className="font-mono">Not implemented</dd></div>
           </dl>
           <p className="mt-3 text-xs text-faint">
-            Execution mode cannot be changed from the UI or environment. Automated order entry,
-            cancellation, stop/target modification and UI automation are excluded by design and
-            by automated tests.
+            PROJECT APEX analyzes markets, monitors the economic calendar and keeps your journal. You place
+            every trade yourself on your own platform; nothing here can submit, modify or cancel an order.
           </p>
         </Panel>
 
@@ -43,7 +45,7 @@ export function Settings() {
           </dl>
         </Panel>
 
-        <Panel title="Integrations">
+        <Panel title="Health">
           <ul className="space-y-3">
             {INTEGRATIONS.map((name) => {
               const c = status?.components.find((x) => x.name === name);
@@ -60,19 +62,22 @@ export function Settings() {
           </ul>
         </Panel>
 
-        <Panel title="Watchlist (configured instruments)">
-          <ul className="grid grid-cols-2 gap-2 text-sm">
-            {TRADER_PROFILE.instruments.map((i) => (
-              <li key={i.symbol} className="rounded border border-line bg-panel-2 px-3 py-1.5 font-mono">
-                {i.symbol} · {i.micro}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 text-xs text-faint">
-            Star instruments on the Market Radar to build your watchlist. Styles:{" "}
-            {TRADER_PROFILE.styles.join(", ")}.
+        <Panel title="Advanced tools">
+          <p className="mb-2 text-xs text-faint">
+            Kept for research and diagnostics; not part of the everyday workflow.
           </p>
+          <ul className="grid grid-cols-2 gap-1.5 text-sm" data-testid="advanced-tools">
+            {ADVANCED.map((href) => {
+              const n = NAV.find((x) => x.href === href);
+              return n ? (
+                <li key={href}><Link href={href} className="text-accent hover:underline">{n.label}</Link></li>
+              ) : null;
+            })}
+          </ul>
         </Panel>
+      </div>
+      <div className="mt-4">
+        <DataReadinessPanel />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <ChangePassword />

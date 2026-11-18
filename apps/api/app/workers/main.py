@@ -13,7 +13,7 @@ import logging
 import os
 import signal
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from redis.exceptions import RedisError
@@ -89,11 +89,15 @@ async def calendar_sync(stop: asyncio.Event, interval_s: float = 6 * 3600) -> No
                 pass
 
 
-async def forexfactory_sync(stop: asyncio.Event, interval_s: float = 3600) -> None:
-    """Fetch the ForexFactory weekly calendar export hourly (its publisher rate-limits the feed)."""
+async def forexfactory_sync(stop: asyncio.Event, tick_s: float = 60) -> None:
+    """Check every minute whether the ForexFactory export is due (hourly; backoff on failure).
+
+    The schedule and backoff are stored in PostgreSQL and guarded by a Redis lock, so restarts or
+    several workers never download more often than the source allows.
+    """
     import httpx
 
-    from app.services.calendar import sync_forexfactory
+    from app.services.calendar import guarded_sync_forexfactory
 
     s = get_settings()
     if not s.calendar_forexfactory:
@@ -104,14 +108,19 @@ async def forexfactory_sync(stop: asyncio.Event, interval_s: float = 3600) -> No
         while not stop.is_set():
             try:
                 async with get_sessionmaker()() as session:
-                    out = await sync_forexfactory(
-                        session, client, s.calendar_forexfactory_url, s.calendar_forexfactory_currencies
+                    out = await guarded_sync_forexfactory(session, get_redis(), client, s, datetime.now(UTC))
+                if "skipped" not in out:
+                    log_event(
+                        log,
+                        "forexfactory calendar sync",
+                        synced=out.get("synced"),
+                        events=out.get("events"),
+                        error=out.get("error"),
                     )
-                log_event(log, "forexfactory calendar synced", events=out["events"], errors=len(out["errors"]))
             except Exception as exc:
                 log_event(log, "forexfactory sync failed", level=logging.WARNING, error=type(exc).__name__)
             try:
-                await asyncio.wait_for(stop.wait(), interval_s)
+                await asyncio.wait_for(stop.wait(), tick_s)
             except TimeoutError:
                 pass
 
@@ -292,6 +301,65 @@ async def autopilot_loop(stop: asyncio.Event, interval_s: float = 15.0) -> None:
             pass
 
 
+NEWS_INTEL_KEY = "apex:news:intel"
+
+
+async def news_intel_loop(stop: asyncio.Event, interval_s: float = 60) -> None:
+    """Every 60 s: re-evaluate the cached calendar against the clock and alert once per event/status.
+
+    Downloads nothing (see forexfactory_sync). Alerts are de-duplicated per event and status.
+    """
+    from app.services import news_intel
+    from app.services.alerts import emit_alert
+
+    while not stop.is_set():
+        try:
+            async with get_sessionmaker()() as session:
+                doc = await news_intel.evaluate(session, datetime.now(UTC), "ES")
+                await get_redis().set(NEWS_INTEL_KEY, json.dumps(doc), ex=300)
+                ev = doc.get("next_high_impact") if doc["status"] == news_intel.UPCOMING else None
+                if doc["status"] in (news_intel.ACTIVE, news_intel.UPCOMING) and (ev or doc["today"]):
+                    target = ev or min(doc["today"], key=lambda e: abs(e["minutes_until"]))
+                    await emit_alert(
+                        session,
+                        get_redis(),
+                        kind="economic_event",
+                        severity="warning",
+                        title=f"{doc['status']}: {target['title']}",
+                        body=f"{target['time_et']} (high impact). {news_intel.DIRECTION_NOTE}",
+                        dedupe_key=f"news:{target['id']}:{doc['status']}",
+                        cooldown_s=86400,
+                        data={"event_id": target["id"], "status": doc["status"]},
+                    )
+                    await session.commit()
+        except Exception:
+            log.exception("news intelligence cycle failed")
+        try:
+            await asyncio.wait_for(stop.wait(), interval_s)
+        except TimeoutError:
+            pass
+
+
+async def analyzer_loop(stop: asyncio.Event, interval_s: float = 20) -> None:
+    """Warm the analyzer cache when new bars close, so the dashboard answers instantly."""
+    from app.services import analyzer
+
+    s = get_settings()
+    if s.market_data_provider == "none":
+        return
+    while not stop.is_set():
+        try:
+            async with get_sessionmaker()() as session:
+                for sym in s.analyzer_symbols:
+                    await analyzer.snapshot(session, sym)
+        except Exception:
+            log.exception("analyzer cycle failed")
+        try:
+            await asyncio.wait_for(stop.wait(), interval_s)
+        except TimeoutError:
+            pass
+
+
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
@@ -299,7 +367,10 @@ async def run(stop: asyncio.Event) -> None:
     ff = asyncio.create_task(forexfactory_sync(stop))
     lab = asyncio.create_task(lab_jobs(stop))
     news = asyncio.create_task(news_poll(stop))
-    auto = asyncio.create_task(autopilot_loop(stop))
+    # Analysis-only build: the simulated autopilot is not started unless explicitly configured.
+    auto = asyncio.create_task(autopilot_loop(stop)) if get_settings().automation_mode != "APEX_MANUAL" else None
+    intel = asyncio.create_task(news_intel_loop(stop))
+    analysis = asyncio.create_task(analyzer_loop(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
     named = {
         "ingestion": ingestion,
@@ -309,6 +380,8 @@ async def run(stop: asyncio.Event) -> None:
         "lab": lab,
         "news": news,
         "autopilot": auto,
+        "news_intel": intel,
+        "analyzer": analysis,
     }
     while not stop.is_set():
         # Supervision: a long-running task that ends while the worker is running means something broke.
@@ -336,7 +409,7 @@ async def run(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), HEARTBEAT_INTERVAL_S)
         except TimeoutError:
             pass
-    tasks = {t for t in (ingestion, scanner, calendar, ff, lab, news, auto) if t is not None}
+    tasks = {t for t in (ingestion, scanner, calendar, ff, lab, news, auto, intel, analysis) if t is not None}
     await asyncio.wait(tasks, timeout=10)
     for t in tasks:
         if not t.done():

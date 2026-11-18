@@ -9,14 +9,13 @@ async function signIn(page: Page) {
   await page.getByLabel("Email").fill(EMAIL);
   await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Market Analyzer", level: 1 })).toBeVisible();
 }
 
 test.describe("advanced charts", () => {
   test("renders labelled candles and switches timeframe and instrument", async ({ page }) => {
     await signIn(page);
-    await page.keyboard.press("g");
-    await page.keyboard.press("c");
+    await page.goto("/charts"); // advanced tool: reachable by URL / settings, not in the main tabs
     await expect(page.getByRole("heading", { name: "Advanced Charts" })).toBeVisible();
 
     // Provenance is explicit: provider, data class, timestamp.

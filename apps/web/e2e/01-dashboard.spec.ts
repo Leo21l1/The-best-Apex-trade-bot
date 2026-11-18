@@ -17,8 +17,14 @@ test.describe.serial("dashboard workflows", () => {
     await page.getByLabel("Confirm password").fill(PASSWORD);
     await page.getByRole("button", { name: "Create account" }).click();
 
-    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Market Analyzer", level: 1 })).toBeVisible();
     await expect(page.getByTestId("execution-mode")).toHaveText("ANALYSIS ONLY");
+    // Exactly three primary tabs; no execution or autopilot controls in normal navigation.
+    const nav = page.getByRole("navigation", { name: "Primary" });
+    await expect(nav.getByRole("link")).toHaveText(["Market Analyzer", "News", "Trading Journal"]);
+    await expect(page.getByRole("link", { name: "Settings and health" })).toBeVisible();
+    await page.goto("/overview");
+    await expect(page.getByRole("heading", { name: "Session Overview", level: 1 })).toBeVisible();
     await expect(page.getByText("Apex rule profile is UNVERIFIED")).toBeVisible();
     // Market data is labelled with its provider and data class; no fabricated opportunities.
     await expect(page.getByTestId("market-provenance")).toContainText("Provider: simulated", {
@@ -41,7 +47,7 @@ test.describe.serial("dashboard workflows", () => {
 
     await page.getByLabel("Password").fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Market Analyzer", level: 1 })).toBeVisible();
 
     // "g y" chord -> System Health
     await page.keyboard.press("g");
@@ -61,10 +67,9 @@ test.describe.serial("dashboard workflows", () => {
 
     // Command palette -> Risk Guardian
     await page.keyboard.press("Control+k");
-    await page.getByLabel("Search pages").fill("risk guard");
+    await page.getByLabel("Search pages").fill("journal");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { name: "Risk Guardian" })).toBeVisible();
-    await expect(page.getByText("Deterministic and advisory")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Trading Journal", level: 1 })).toBeVisible();
 
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/login$/);
@@ -77,7 +82,7 @@ test.describe.serial("dashboard workflows", () => {
     await page.getByLabel("Email").fill(EMAIL);
     await page.getByLabel("Password").fill(PASSWORD);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Market Analyzer", level: 1 })).toBeVisible();
     const pages: [string, string][] = [
       ["/radar", "Market Radar"], ["/opportunities", "Opportunity Leaderboard"],
       ["/charts", "Advanced Charts"],
@@ -86,7 +91,7 @@ test.describe.serial("dashboard workflows", () => {
       ["/strategies", "Strategy Laboratory"], ["/backtesting", "Backtesting"],
       ["/journal", "Trading Journal"], ["/performance", "My Trading Performance"],
       ["/calendar", "Economic Calendar"], ["/settings", "Settings & Integrations"], ["/paper", "Paper Simulator"], ["/terminal", "Trading Terminal"], ["/trade", "Trade Review & Replay"],
-      ["/system", "System Health"],
+      ["/system", "System Health"], ["/news", "News"], ["/overview", "Session Overview"], ["/", "Market Analyzer"],
     ];
     for (const [path, heading] of pages) {
       await page.goto(path);

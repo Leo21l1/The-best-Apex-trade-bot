@@ -752,6 +752,11 @@ export interface TradeStats {
   max_drawdown: number;
   contracts: number;
   low_sample?: boolean;
+  gross_pnl?: number;
+  avg_r?: number | null;
+  r_trades?: number;
+  max_consecutive_wins?: number;
+  max_consecutive_losses?: number;
 }
 
 export interface JournalResponse {

@@ -2,7 +2,7 @@
 
 from app.models.account import AccountSnapshot, RuleRow
 from app.models.audit import AuditLog
-from app.models.calendar import EconomicEvent, NewsItem
+from app.models.calendar import EconomicEvent, NewsItem, SourceSyncState
 from app.models.candle import CandleRow
 from app.models.copilot import CopilotExchange
 from app.models.research import (
@@ -36,6 +36,7 @@ __all__ = [
     "Role",
     "RuleRow",
     "SignalRow",
+    "SourceSyncState",
     "TradePlan",
     "User",
 ]

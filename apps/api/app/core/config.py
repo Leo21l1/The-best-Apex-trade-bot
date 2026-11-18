@@ -170,6 +170,16 @@ class Settings(BaseSettings):
     calendar_forexfactory_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     #: Currencies kept from the export. USD events drive US index futures; others are informational.
     calendar_forexfactory_currencies: list[str] = Field(default_factory=lambda: ["USD"])
+    #: News intelligence (re-evaluated every 60 s against the cached calendar). Windows around a
+    #: high-impact release: "upcoming" from -upcoming to -pre minutes, "window active" from -pre to
+    #: +active_after, "post-news volatility" from +active_after to +post (calendar_post_event_minutes).
+    news_upcoming_minutes: int = Field(default=60, ge=0, le=720)
+    news_active_after_minutes: int = Field(default=5, ge=0, le=120)
+    #: The cached calendar is STALE when the last successful download is older than this.
+    news_stale_hours: float = Field(default=3.0, ge=0.5, le=48)
+
+    #: Instruments shown in the market analyzer (only these three are displayed).
+    analyzer_symbols: list[str] = Field(default_factory=lambda: ["ES", "NQ", "MNQ"])
 
     @property
     def execution_mode(self) -> ExecutionMode:

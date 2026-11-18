@@ -294,7 +294,10 @@ async def test_copilot_tools_and_statistics_endpoint(admin_client: httpx.AsyncCl
     from app.ai.tools import TOOLS, ToolContext, run_tool
     from app.models.research import BacktestRun
 
-    assert list(TOOLS)[-3:] == ["get_entry_confirmation", "get_data_readiness", "get_strategy_statistics"]
+    names = list(TOOLS)
+    assert {"get_entry_confirmation", "get_data_readiness", "get_strategy_statistics", "get_market_analysis"} <= set(
+        names
+    )
     get_settings().market_data_provider = "simulated"
     async with get_sessionmaker()() as s:
         await upsert_candles(

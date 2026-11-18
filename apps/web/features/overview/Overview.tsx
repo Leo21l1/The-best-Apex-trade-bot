@@ -24,7 +24,7 @@ export function Overview() {
   const { data: rules } = usePolling<RulesResponse>("/api/rules", 60_000);
   return (
     <>
-      <PageHeader path="/" />
+      <PageHeader path="/overview" />
 
       <div className="space-y-3">
         <Callout tone="info" title="Execution mode: ANALYSIS ONLY">

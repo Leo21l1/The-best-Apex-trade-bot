@@ -179,6 +179,8 @@ async def upsert_events(
                 "category": stmt.excluded.category,
                 "importance": stmt.excluded.importance,
                 "affected": stmt.excluded.affected,
+                "forecast": stmt.excluded.forecast,
+                "previous": stmt.excluded.previous,
             },
         )
         await session.execute(stmt)
@@ -347,6 +349,8 @@ async def upsert_ff_events(session: AsyncSession, events: Sequence[FFEvent], sou
             country=e.currency[:8],
             source="forexfactory",
             source_ref=source_ref[:500],
+            forecast=(e.forecast or None) and e.forecast[:64],
+            previous=(e.previous or None) and e.previous[:64],
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["uid"],
@@ -374,3 +378,73 @@ async def sync_forexfactory(session: AsyncSession, client: Any, url: str, curren
     n = await upsert_ff_events(session, events, url)
     await session.commit()
     return {"events": n, "high": sum(e.impact == "high" for e in events), "errors": errors[:20]}
+
+
+FF_SOURCE = "forexfactory"
+FF_LOCK = "apex:lock:forexfactory"
+
+
+async def sync_state(session: AsyncSession, source: str = FF_SOURCE) -> Any:
+    from app.models.calendar import SourceSyncState
+
+    return await session.get(SourceSyncState, source)
+
+
+async def guarded_sync_forexfactory(
+    session: AsyncSession, redis: Any, client: Any, settings: Any, now: datetime, interval_s: int = 3600
+) -> dict[str, Any]:
+    """Download the ForexFactory export only when it is due, by one worker at a time.
+
+    * The schedule lives in PostgreSQL (``source_sync_state``), so restarts and several workers never
+      re-download early. A Redis lock (SET NX, 5 minutes) serialises concurrent attempts.
+    * Success: next attempt after ``interval_s``. Failure: exponential backoff (5, 10, 20, 40 minutes,
+      capped at the interval); HTTP 429 honours Retry-After. No retries inside one attempt.
+    * A failure never deletes or ages the stored events; freshness is reported from ``last_success_at``.
+    """
+    import httpx
+
+    from app.models.calendar import SourceSyncState
+
+    st = await session.get(SourceSyncState, FF_SOURCE)
+    if st is None:
+        st = SourceSyncState(source=FF_SOURCE, failures=0, events=0)
+        session.add(st)
+        await session.flush()
+    if st.next_attempt_at is not None and now < st.next_attempt_at:
+        return {"skipped": "not due", "next_attempt_at": st.next_attempt_at.isoformat()}
+    try:
+        got = await redis.set(FF_LOCK, "1", nx=True, ex=300)
+    except Exception:  # Redis down: proceed (the DB schedule still limits the rate)
+        got = True
+    if not got:
+        return {"skipped": "another worker is syncing"}
+    st.last_attempt_at = now
+    try:
+        out = await sync_forexfactory(
+            session, client, settings.calendar_forexfactory_url, settings.calendar_forexfactory_currencies
+        )
+        if out["events"] == 0 and out["errors"]:
+            raise ValueError(out["errors"][0])
+        st.last_success_at, st.failures, st.events, st.last_error = now, 0, out["events"], None
+        st.next_attempt_at = now + timedelta(seconds=interval_s)
+        result: dict[str, Any] = {"synced": True, **out}
+    except (httpx.HTTPError, ValueError) as exc:
+        await session.rollback()
+        st = await session.get(SourceSyncState, FF_SOURCE) or SourceSyncState(source=FF_SOURCE, failures=0, events=0)
+        session.add(st)
+        st.last_attempt_at = now
+        st.failures = (st.failures or 0) + 1
+        wait = min(interval_s, 300 * 2 ** (st.failures - 1))
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
+            ra = exc.response.headers.get("Retry-After", "")
+            wait = max(wait, int(ra)) if ra.isdigit() else max(wait, 900)
+        st.next_attempt_at = now + timedelta(seconds=wait)
+        st.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        result = {"synced": False, "error": st.last_error, "retry_in_s": wait}
+    finally:
+        try:
+            await redis.delete(FF_LOCK)
+        except Exception:  # cache is optional  # noqa: S110
+            pass
+    await session.commit()
+    return result

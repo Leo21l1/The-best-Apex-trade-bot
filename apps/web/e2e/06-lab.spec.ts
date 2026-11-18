@@ -5,7 +5,7 @@ async function signIn(page: Page) {
   await page.getByLabel("Email").fill("e2e-trader@example.com");
   await page.getByLabel("Password").fill("E2e-Correct-Horse-42!");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Market Analyzer", level: 1 })).toBeVisible();
 }
 
 const TRADES = [
@@ -63,9 +63,9 @@ test.describe.serial("backtesting, paper trading, journal, performance", () => {
     // 4pts x $50 - 5 = 195; -4pts x $50 - 5 = -205; 10pts x $2 x 3 - 3.60 = 56.40 -> 46.40
     await expect(page.getByTestId("journal-stats")).toContainText("+$46.40");
     await page.getByTestId("journal-table").locator("tbody tr").filter({ hasText: "-$205.00" }).click();
-    await page.getByText("moved stop", { exact: true }).click();
+    await page.getByTestId("journal-table").getByText("moved stop", { exact: true }).click();
     await page.getByLabel("Followed plan").selectOption("false");
-    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByTestId("journal-table")).toContainText("moved_stop");
 
     await page.goto("/performance");

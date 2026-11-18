@@ -5,7 +5,7 @@ async function signIn(page: Page) {
   await page.getByLabel("Email").fill("e2e-trader@example.com");
   await page.getByLabel("Password").fill("E2e-Correct-Horse-42!");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Market Analyzer", level: 1 })).toBeVisible();
 }
 
 const ICS = [
@@ -50,6 +50,7 @@ test.describe("copilot, calendar and briefing", () => {
 
   test("overview shows the deterministic session briefing", async ({ page }) => {
     await signIn(page);
+    await page.goto("/overview");
     const b = page.getByTestId("briefing");
     await expect(b).toBeVisible();
     await expect(b).toContainText("Apex rule profile UNVERIFIED");

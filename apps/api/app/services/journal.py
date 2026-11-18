@@ -230,6 +230,17 @@ def to_row(t: ParsedTrade, source: str) -> JournalTrade:
 # --- reports ---------------------------------------------------------------------------------
 
 
+def r_multiple(t: JournalTrade) -> float | None:
+    """Result in R: net P&L / planned risk at the stop (entry-to-stop x point value x quantity + fees)."""
+    from app.marketdata.instruments import INSTRUMENTS
+
+    inst = INSTRUMENTS.get(t.symbol)
+    if inst is None or not t.planned_stop:
+        return None
+    risk = abs(t.entry_price - t.planned_stop) * float(inst.point_value) * t.quantity
+    return round(t.net_pnl / risk, 2) if risk > 0 else None
+
+
 def stats(trades: Sequence[JournalTrade]) -> dict[str, Any]:
     n = len(trades)
     pnl = [t.net_pnl for t in trades]
@@ -241,7 +252,21 @@ def stats(trades: Sequence[JournalTrade]) -> dict[str, Any]:
         pk = max(pk, eq)
         dd = max(dd, pk - eq)
     gl = -sum(losses)
+    streak = {"win": 0, "loss": 0}
+    best = {"win": 0, "loss": 0}
+    for t in sorted(trades, key=lambda t: t.exit_time):
+        k = "win" if t.net_pnl > 0 else "loss"
+        o = "loss" if k == "win" else "win"
+        streak[k] += 1
+        streak[o] = 0
+        best[k] = max(best[k], streak[k])
+    rs = [r for r in (r_multiple(t) for t in trades) if r is not None]
     return {
+        "max_consecutive_wins": best["win"],
+        "max_consecutive_losses": best["loss"],
+        "avg_r": round(sum(rs) / len(rs), 2) if rs else None,
+        "r_trades": len(rs),
+        "gross_pnl": round(sum(t.gross_pnl for t in trades), 2),
         "trades": n,
         "net_pnl": round(sum(pnl), 2),
         "fees": round(sum(t.fees for t in trades), 2),

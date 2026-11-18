@@ -176,6 +176,13 @@ def _merge_liquidity(analyses: dict[str, Analysis], price: float | None) -> dict
             continue  # 1-minute pivots are too noisy for a liquidity map
         for lv in a.liquidity:
             row = {**lv, "timeframe": tf, "score": round(lv["score"] + weight.get(tf, 0), 1)}
+            if price is not None:
+                # Each timeframe's analysis classified the level against ITS last close; re-classify
+                # against the one current price so above/below is consistent.
+                if lv["price"] == price:
+                    continue
+                row["side"] = "above" if lv["price"] > price else "below"
+                row["distance"] = round(lv["price"] - price, 6)
             if lv["price"] not in best or row["score"] > best[lv["price"]]["score"]:
                 best[lv["price"]] = row
     levels = sorted(best.values(), key=lambda x: -x["score"])

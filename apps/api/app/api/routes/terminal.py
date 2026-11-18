@@ -455,28 +455,90 @@ async def cancel_plan(plan_id: int, _: AdminUser, session: SessionDep) -> dict[s
 # --- trades: manual entry, detail, review, replay, AI narrative --------------------------------
 
 
-class ManualTradeIn(BaseModel):
+class FillIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    symbol: str
-    direction: Literal["long", "short"]
-    quantity: int = Field(ge=1, le=100)
-    entry_time: datetime
-    exit_time: datetime
-    entry_price: float = Field(gt=0)
-    exit_price: float = Field(gt=0)
-    fees: float | None = Field(default=None, ge=0)
-    planned_stop: float | None = Field(default=None, gt=0)
-    planned_target: float | None = Field(default=None, gt=0)
-    plan_id: int | None = None
-    strategy_id: str | None = None
-    notes: str | None = Field(default=None, max_length=5000)
+    time: datetime
+    side: Literal["entry", "exit"]
+    qty: int = Field(ge=1, le=100)
+    price: float = Field(gt=0)
 
-    @field_validator("entry_time", "exit_time")
+    @field_validator("time")
     @classmethod
     def _aware(cls, v: datetime) -> datetime:
         if v.tzinfo is None:
             raise ValueError("must include a timezone")
         return v
+
+
+class ManualTradeIn(BaseModel):
+    """A trade the trader executed elsewhere. Either one entry/exit pair or individual ``fills``
+    (scaled entries / partial exits; entry and exit quantities must balance)."""
+
+    model_config = ConfigDict(extra="forbid")
+    symbol: str
+    direction: Literal["long", "short"]
+    quantity: int | None = Field(default=None, ge=1, le=100)
+    entry_time: datetime | None = None
+    exit_time: datetime | None = None
+    entry_price: float | None = Field(default=None, gt=0)
+    exit_price: float | None = Field(default=None, gt=0)
+    fills: list[FillIn] | None = Field(default=None, max_length=50)
+    fees: float | None = Field(default=None, ge=0)
+    contract: str | None = Field(default=None, max_length=16)
+    planned_stop: float | None = Field(default=None, gt=0)
+    planned_target: float | None = Field(default=None, gt=0)
+    plan_id: int | None = None
+    strategy_id: str | None = None
+    setup: str | None = Field(default=None, max_length=64)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    mistakes: list[str] | None = Field(default=None, max_length=20)
+    emotion_tags: list[str] | None = Field(default=None, max_length=20)
+    psychology: str | None = Field(default=None, max_length=5000)
+    notes: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("entry_time", "exit_time")
+    @classmethod
+    def _aware(cls, v: datetime | None) -> datetime | None:
+        if v is not None and v.tzinfo is None:
+            raise ValueError("must include a timezone")
+        return v
+
+    @field_validator("tags", "mistakes", "emotion_tags")
+    @classmethod
+    def _short(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        out = [x.strip()[:40] for x in v if x and x.strip()]
+        return list(dict.fromkeys(out))
+
+
+def resolve_fills(body: ManualTradeIn) -> tuple[int, datetime, datetime, float, float, list[dict[str, Any]] | None]:
+    """(quantity, entry time, exit time, avg entry, avg exit, fills) - averages are quantity-weighted."""
+    if body.fills:
+        ent = [f for f in body.fills if f.side == "entry"]
+        ex = [f for f in body.fills if f.side == "exit"]
+        qe, qx = sum(f.qty for f in ent), sum(f.qty for f in ex)
+        if not ent or not ex or qe != qx:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Fills must close the position: entry quantity {qe} vs exit quantity {qx}",
+            )
+        if min(f.time for f in ex) < min(f.time for f in ent):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "An exit fill is before the first entry")
+        avg_e = sum(f.qty * f.price for f in ent) / qe
+        avg_x = sum(f.qty * f.price for f in ex) / qx
+        fills = [
+            {"time": f.time.astimezone(UTC).isoformat(), "side": f.side, "qty": f.qty, "price": f.price}
+            for f in sorted(body.fills, key=lambda f: f.time)
+        ]
+        return qe, min(f.time for f in ent), max(f.time for f in ex), avg_e, avg_x, fills
+    if None in (body.quantity, body.entry_time, body.exit_time, body.entry_price, body.exit_price):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Provide quantity, entry/exit time and entry/exit price, or a list of fills",
+        )
+    assert body.quantity and body.entry_time and body.exit_time and body.entry_price and body.exit_price
+    return body.quantity, body.entry_time, body.exit_time, body.entry_price, body.exit_price, None
 
 
 def trade_detail(t: JournalTrade) -> dict[str, Any]:
@@ -498,9 +560,11 @@ async def manual_trade(body: ManualTradeIn, user: AdminUser, request: Request, s
     inst = INSTRUMENTS[get_instrument(body.symbol).symbol] if get_instrument(body.symbol) else None
     if inst is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown symbol")
-    if body.exit_time < body.entry_time:
+    qty, entry_time, exit_time, entry_px, exit_px, fills = resolve_fills(body)
+    if exit_time < entry_time:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Exit is before entry")
-    for px in (body.entry_price, body.exit_price):
+    prices = [f["price"] for f in fills] if fills else [entry_px, exit_px]
+    for px in prices:
         if abs(round(px / float(inst.tick_size)) * float(inst.tick_size) - px) > 1e-9:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, f"Prices must be on the {inst.tick_size} tick grid"
@@ -512,27 +576,34 @@ async def manual_trade(body: ManualTradeIn, user: AdminUser, request: Request, s
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Trade does not match the plan's symbol/direction"
             )
     sgn = 1 if body.direction == "long" else -1
-    gross = round((body.exit_price - body.entry_price) * sgn * float(inst.point_value) * body.quantity, 2)
+    # Gross P&L from the quantity-weighted averages equals the sum over individual fills.
+    gross = round((exit_px - entry_px) * sgn * float(inst.point_value) * qty, 2)
     per = s.cost_commission_per_side_micro if inst.is_micro else s.cost_commission_per_side_standard
-    fees = body.fees if body.fees is not None else round(2 * per * body.quantity, 2)
+    # Fees are stored once, separately from gross P&L (never inside the prices).
+    fees = body.fees if body.fees is not None else round(2 * per * qty, 2)
     key = (
-        f"manual:{inst.symbol}|{body.entry_time.isoformat()}|{body.exit_time.isoformat()}|{body.quantity}|"
-        f"{body.entry_price}|{body.exit_price}"
+        f"manual:{inst.symbol}|{entry_time.isoformat()}|{exit_time.isoformat()}|{qty}|"
+        f"{round(entry_px, 6)}|{round(exit_px, 6)}"
     )
     if await session.scalar(select(JournalTrade).where(JournalTrade.source_key == key)):
         raise HTTPException(status.HTTP_409_CONFLICT, "This trade is already recorded")
     t = JournalTrade(
         source_key=key,
         source="manual",
-        trading_date=trading_day(body.exit_time),
+        trading_date=trading_day(exit_time),
         symbol=inst.symbol,
-        contract=inst.symbol,
+        contract=(body.contract or inst.symbol).upper(),
         direction=body.direction,
-        quantity=body.quantity,
-        entry_time=body.entry_time.astimezone(UTC),
-        exit_time=body.exit_time.astimezone(UTC),
-        entry_price=body.entry_price,
-        exit_price=body.exit_price,
+        quantity=qty,
+        entry_time=entry_time.astimezone(UTC),
+        exit_time=exit_time.astimezone(UTC),
+        entry_price=round(entry_px, 6),
+        exit_price=round(exit_px, 6),
+        fills=fills,
+        setup=body.setup,
+        tags=body.tags or [],
+        emotion_tags=body.emotion_tags or [],
+        psychology=body.psychology,
         gross_pnl=gross,
         fees=fees,
         net_pnl=round(gross - fees, 2),
@@ -541,7 +612,7 @@ async def manual_trade(body: ManualTradeIn, user: AdminUser, request: Request, s
         plan_id=body.plan_id,
         strategy_id=body.strategy_id,
         notes=body.notes,
-        mistakes=[],
+        mistakes=body.mistakes or [],
         slippage=0.0,
     )
     session.add(t)

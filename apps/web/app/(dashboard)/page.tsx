@@ -1,5 +1,5 @@
-import { Overview } from "@/features/overview/Overview";
+import { MarketAnalyzer } from "@/features/analyzer/MarketAnalyzer";
 
 export default function Page() {
-  return <Overview />;
+  return <MarketAnalyzer />;
 }

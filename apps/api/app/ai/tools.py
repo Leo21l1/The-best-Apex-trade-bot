@@ -472,6 +472,43 @@ async def get_entry_confirmation(ctx: ToolContext, args: dict[str, Any]) -> dict
     }
 
 
+async def get_market_analysis(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """The deterministic Market Analyzer result for ES, NQ or MNQ (computed before the AI sees it)."""
+    from app.services import analyzer
+
+    sym = _symbol(args.get("symbol"))
+    if sym not in ctx.settings.analyzer_symbols:
+        return {"error": f"{sym} is not an analyzer instrument ({', '.join(ctx.settings.analyzer_symbols)})."}
+    doc = await analyzer.snapshot(ctx.session, sym, ctx.now)
+    doc.pop("_stamp", None)
+    doc.pop("advanced", None)  # keep the tool result compact; the summary fields carry the evidence
+    return {
+        **doc,
+        "data_class": "verified_app_data",
+        "notes": [
+            "Bias, structure, zones, levels, news status and the setup are computed by fixed rules from stored "
+            "closed bars; quote them, never invent or upgrade them.",
+            "The setup-quality score is a checklist score, not a win probability.",
+            "MNQ and NQ track the same index: their agreement is not independent confirmation.",
+            "If data.label is UNAVAILABLE or STALE, say the analysis is unavailable instead of guessing.",
+        ],
+    }
+
+
+async def get_news_intelligence(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+    """Current news-risk status and today's / next day's events from the cached calendar."""
+    from app.services import news_intel
+
+    return {
+        **await news_intel.evaluate(ctx.session, ctx.now, _symbol(args.get("symbol") or "ES")),
+        "data_class": "verified_app_data",
+        "notes": [
+            "Scheduled calendar, not breaking news. Never state an actual value the source did not supply.",
+            "Never predict the direction of a reaction from a forecast or result.",
+        ],
+    }
+
+
 async def get_data_readiness(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     from app.services.history import coverage, get_job
 
@@ -653,6 +690,28 @@ TOOLS: dict[str, tuple[Any, dict[str, Any]]] = {
                 },
                 ["symbol"],
             ),
+        },
+    ),
+    "get_market_analysis": (
+        get_market_analysis,
+        {
+            "description": "Market Analyzer result for ES, NQ or MNQ: data status and age, bias (BULLISH / BEARISH / "
+            "NEUTRAL / WAIT) with 1h/15m/5m structure, internal and swing BOS/CHoCH, premium/discount, FVGs, order "
+            "blocks, liquidity levels (PDH/PDL, weekly, monthly, overnight, equal highs/lows) and their state "
+            "(approaching, breached, swept and reclaimed, accepted beyond), observations, potential setup with "
+            "gross/net R:R, reasons to wait, 12-factor confluence, strategy status by family, and news risk. "
+            "Prefer this tool to explain what the market is doing.",
+            "input_schema": _schema({"symbol": _SYMBOL}, ["symbol"]),
+        },
+    ),
+    "get_news_intelligence": (
+        get_news_intelligence,
+        {
+            "description": "News-risk status (HIGH IMPACT UPCOMING / NEWS WINDOW ACTIVE / POST-NEWS VOLATILITY / NO "
+            "MAJOR SCHEDULED EVENT NEARBY / NEWS DATA STALE / UNAVAILABLE), next high-impact USD event with "
+            "Eastern time and countdown, today's and the next trading day's events with forecast/previous/actual "
+            "as published, and the calendar source freshness.",
+            "input_schema": _schema({"symbol": _SYMBOL}),
         },
     ),
     "get_data_readiness": (
