@@ -21,6 +21,16 @@ from app.services.session_intel import efficiency_ratio
 OR_START, OR_END = time(9, 30), time(9, 45)
 
 
+def session_minute(ts: datetime) -> int:
+    """Minutes since the 18:00 ET start of the CME trading day the timestamp belongs to.
+
+    Comparing raw clock times is wrong for the evening part of a session: 18:30 ET is the start of
+    the trading day, but as a clock time it sorts after 16:59 (the previous close).
+    """
+    local = ts.astimezone(ET)
+    return (local.hour * 60 + local.minute - 18 * 60) % 1440
+
+
 def _pct_rank(values: Sequence[float], x: float) -> int | None:
     return round(100 * sum(1 for v in values if v <= x) / len(values)) if values else None
 
@@ -33,6 +43,7 @@ def volatility_profile(
         return {"available": False, "reason": "Fewer than 30 completed 1-minute bars."}
     today = trading_day(now)
     t_now = now.astimezone(ET).time()
+    m_now = session_minute(now)
     by_day: dict[Any, list[Bar]] = {}
     for b in bars:
         by_day.setdefault(trading_day(b.ts), []).append(b)
@@ -46,16 +57,16 @@ def volatility_profile(
     idx_by_day: dict[Any, int] = {}
     for i, b in enumerate(b5):
         d = trading_day(b.ts)
-        if d in prior and b.ts.astimezone(ET).time() < t_now:
+        if d in prior and session_minute(b.ts) + 5 <= m_now:  # 5m bar closed by the same session time
             idx_by_day[d] = i
     atr_ref = [a14[i] for i in idx_by_day.values() if a14[i]]
 
-    def session_range(rows: list[Bar], until: time | None) -> float | None:
-        sel = [b for b in rows if until is None or b.ts.astimezone(ET).time() < until]
+    def session_range(rows: list[Bar], until: int | None) -> float | None:
+        sel = [b for b in rows if until is None or session_minute(b.ts) < until]
         return (max(b.high for b in sel) - min(b.low for b in sel)) if sel else None
 
     rng_now = session_range(by_day.get(today, []), None)
-    rng_ref = [r for r in (session_range(by_day[d], t_now) for d in prior) if r]
+    rng_ref = [r for r in (session_range(by_day[d], m_now) for d in prior) if r]
 
     def or_size(rows: list[Bar]) -> float | None:
         sel = [b for b in rows if OR_START <= b.ts.astimezone(ET).time() < OR_END]

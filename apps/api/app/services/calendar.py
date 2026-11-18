@@ -82,7 +82,7 @@ def _unfold(text: str) -> list[str]:
 
 
 def _unescape(v: str) -> str:
-    return v.replace("\\n", " ").replace("\\N", " ").replace("\\,", ",").replace("\;", ";").replace("\\\\", "\\")
+    return v.replace("\\n", " ").replace("\\N", " ").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
 
 
 def _parse_dt(value: str, params: dict[str, str]) -> datetime:

@@ -187,3 +187,25 @@ def test_regime_trend_vs_chop() -> None:
     c = regime_profile(chop, NOW, vwap_crosses_today=6)
     assert "choppy" in c["labels"] and "bullish trend" not in c["labels"]
     assert regime_profile(trend[:20], NOW)["labels"] == ["unknown"]
+
+
+def test_volatility_in_the_evening_compares_the_same_session_time_not_the_previous_close() -> None:
+    """Regression: at 18:40 ET (start of a CME trading day) prior sessions were compared at 16:59,
+    so 'typical range by now' was a whole day's range and the ATR reference was the prior close."""
+    out: list[Bar] = []
+    for back in range(8, -1, -1):
+        day = datetime(2026, 11, 13, tzinfo=UTC) - timedelta(days=back)  # evening of `day` starts a session
+        if day.weekday() >= 5 or day.weekday() == 4:
+            continue  # no Friday-evening or weekend sessions
+        ev = day.replace(hour=23, minute=0)  # 18:00 ET (EST)
+        for i in range(60):  # quiet evening: range 1.0
+            out.append(Bar(ev + timedelta(minutes=i), 5000, 5000.5, 4999.5, 5000, 50))
+        if back:
+            nxt = day + timedelta(days=1)
+            for i in range(400):  # busy next morning/day: range 10
+                ts = nxt.replace(hour=14, minute=0) + timedelta(minutes=i)
+                out.append(Bar(ts, 5000, 5005, 4995, 5000, 500))
+    now = datetime(2026, 11, 12, 23, 41, tzinfo=UTC)  # Thursday 18:41 ET
+    v = volatility_profile([b for b in out if b.ts < now], now, min_sessions=2)
+    assert v["typical_range_by_now"] == 1.0  # the evening range, not the 10-point day range
+    assert v["session_range_so_far"] == 1.0

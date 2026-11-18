@@ -29,6 +29,7 @@ from app.marketdata.instruments import INSTRUMENTS
 from app.research.bars import Bar
 
 FLATTEN_AT = time(16, 58)  # positions closed before the 17:00 ET session end (conservative)
+SESSION_REOPEN = time(18, 0)  # CME Globex reopens; the evening belongs to the next trading day
 ORDER_TYPES = ("market", "limit", "stop")
 SIDES = ("buy", "sell")
 
@@ -455,7 +456,9 @@ class PaperBook:
         if self.s["status"] != "active":
             return
         local = bar.ts.astimezone(ET).time()
-        if local >= FLATTEN_AT and self.s["positions"]:
+        # Only the closing minutes before the 17:00 ET session end. 18:00-23:59 ET is the START of the
+        # next trading day and must not flatten (a plain `>= 16:58` matched every evening minute).
+        if FLATTEN_AT <= local < SESSION_REOPEN and self.s["positions"]:
             self._flatten(bar.ts, "end of session (16:58 ET)")
         equity = self.s["balance"] + self.unrealized()
         if equity <= self.threshold():

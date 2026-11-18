@@ -117,7 +117,7 @@ async def test_stored_bars_marked_stale_when_worker_stops_reporting(
 
 
 async def test_gap_report_detects_deleted_bars(admin_client: httpx.AsyncClient) -> None:
-    from sqlalchemy import delete, func, select
+    from sqlalchemy import delete, select
 
     from app.models.candle import CandleRow
 
@@ -126,7 +126,10 @@ async def test_gap_report_detects_deleted_bars(admin_client: httpx.AsyncClient) 
     assert clean["missing_bars"] == 0 and clean["present_bars"] == clean["expected_bars"] > 0
 
     async with get_sessionmaker()() as s:
-        last = await s.scalar(select(func.max(CandleRow.ts)))
+        stored = set((await s.scalars(select(CandleRow.ts).where(CandleRow.symbol == "ES"))).all())
+        # Anchor on a bar whose whole 40-minute look-back is stored, so no victim falls in the 17:00-18:00 ET
+        # maintenance break (where no bar is expected). A plain max(ts) made this test fail just after 18:00 ET.
+        last = max(t for t in stored if all(t - timedelta(minutes=m) in stored for m in range(41)))
         victims = [last - timedelta(minutes=m) for m in (10, 11, 12, 40)]
         await s.execute(delete(CandleRow).where(CandleRow.ts.in_(victims)))
         await s.commit()

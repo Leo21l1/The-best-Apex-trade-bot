@@ -218,3 +218,25 @@ def test_partial_close_prorates_entry_slippage() -> None:
     )
     b.on_bar("ES", bar(2, 5004, 5006, 5003, 5005))
     assert b.s["closed"][-1]["slippage"] == 12.5 and b.position("ES")["entry_slippage"] == 37.5
+
+
+def test_overnight_session_position_is_not_flattened_as_end_of_session() -> None:
+    """Regression: `>= 16:58 ET` also matched 18:00-23:59 ET, closing every overnight position at once."""
+    evening = datetime(2026, 11, 12, 0, 15, tzinfo=UTC)  # Wed 19:15 ET (start of Thursday's session)
+    b = book()
+    b.submit({"symbol": "ES", "side": "buy", "type": "market", "qty": 1}, evening)
+    for m in range(1, 4):
+        b.on_bar("ES", bar(m, 5000, 5001, 4999, 5000, start=evening))
+    assert b.position("ES")["qty"] == 1
+    assert not any("end of session" in e["text"] for e in b.s["events"])
+    b.on_bar("ES", Bar(datetime(2026, 11, 12, 21, 58, tzinfo=UTC), 5000, 5001, 4999, 5000, 100))  # Thu 16:58 ET
+    assert b.position("ES")["qty"] == 0 and "end of session" in b.s["events"][-1]["text"]
+
+
+def test_trade_review_exit_simulation_does_not_flatten_evening_trades() -> None:
+    from app.services.trade_review import _simulate
+
+    evening = datetime(2026, 11, 12, 0, 15, tzinfo=UTC)  # 19:15 ET
+    bars = [bar(m, 5000, 5000 + m, 4999, 5000 + m, start=evening) for m in range(20)]
+    out = _simulate(bars, 0, "long", 5000.0, 4990.0, 5010.0, 0.25)
+    assert out is not None and out[1] == "target"  # reached the target, not an instant "flat by 15:55 ET"

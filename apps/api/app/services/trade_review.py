@@ -239,7 +239,7 @@ def _simulate(
         b = bars[j]
         if j > start and b.ts - bars[j - 1].ts > timedelta(minutes=2):
             return bars[j - 1].close - s * tick, "data gap / session end", bars[j - 1].ts
-        if b.ts.astimezone(ET).time() >= FLAT_BY:
+        if FLAT_BY <= b.ts.astimezone(ET).time() < time(18, 0):  # not the 18:00-24:00 start of the next session
             return b.open - s * tick, "flat by 15:55 ET", b.ts
         if (b.low <= stop) if s == 1 else (b.high >= stop):
             gap = b.open < stop if s == 1 else b.open > stop
