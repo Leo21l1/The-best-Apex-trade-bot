@@ -101,11 +101,17 @@ export function EntryConfirmationPanel({ symbol, refreshKey }: { symbol: string;
             <span className={cx("rounded border px-2 py-0.5 font-mono text-sm font-semibold tracking-wider", STATE_CLS[c.state])} data-testid="confirm-state">{c.state}</span>
             <span className="font-mono text-text" data-testid="confirm-count">{c.passed}/{c.total} pass</span>
             <span className={cx("rounded border px-1.5 font-mono text-[10px]", c.data_class === "LIVE" ? "border-up/40 text-up" : "border-warn/40 text-warn")} data-testid="confirm-data-class">{c.data_class}</span>
+            <span className={cx("rounded border px-1.5 font-mono text-[10px]", c.actionable ? "border-up/50 text-up" : "border-line text-faint")} data-testid="confirm-actionable">
+              {c.actionable ? "ACTIONABLE (manual decision)" : "INFORMATIONAL ONLY"}
+            </span>
             {c.news_status === "NEWS STATUS UNKNOWN" && <span className="rounded border border-warn/40 px-1.5 font-mono text-[10px] text-warn" data-testid="confirm-news-unknown">NEWS STATUS UNKNOWN</span>}
           </div>
           <p className="text-muted" data-testid="confirm-summary">{c.summary}</p>
           <dl className="grid grid-cols-[7rem_1fr] gap-x-2 gap-y-0.5 text-[11px]">
             <dt className="text-faint">Instrument</dt><dd className="font-mono">{c.symbol}{c.contract ? ` · ${c.contract}` : ""}{c.strategy_id ? ` · ${c.strategy_id}` : ""}{c.direction ? ` · ${c.direction}` : ""}</dd>
+            <dt className="text-faint">Price</dt><dd className="font-mono" data-testid="confirm-price">{c.current_price ?? "—"}{c.data_timestamp ? ` · bar ${formatEt(c.data_timestamp, true)}` : ""}</dd>
+            {c.config && <><dt className="text-faint">Configuration</dt><dd className="font-mono" data-testid="confirm-config">{c.config}</dd></>}
+            <dt className="text-faint">Account snapshot</dt><dd className="font-mono" data-testid="confirm-snapshot">{c.account_snapshot_at ? formatEt(c.account_snapshot_at, true) : "none — Risk Guardian status UNKNOWN"}</dd>
             <dt className="text-faint">As of</dt><dd className="font-mono">{c.ny_time}{c.data_timestamp ? ` · bar ${formatEt(c.data_timestamp)}` : ""}</dd>
             {c.regime && <><dt className="text-faint">Regime</dt><dd>{c.regime.labels.join(", ")}</dd></>}
             {c.evidence_classification && (

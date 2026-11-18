@@ -17,6 +17,7 @@ from typing import Any
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.adapters.marketdata.base import (
@@ -217,7 +218,11 @@ class IngestionService:
                 log_event(log, "provider auth error", level=logging.ERROR, error=str(exc))
                 await self._wait(stop, self._backoff_max)
                 continue
-            except (ProviderError, OSError, RedisError) as exc:
+            except (ProviderError, OSError, RedisError, SQLAlchemyError, Exception) as exc:
+                # Database errors (PostgreSQL restarting, dropped connection) and anything unexpected
+                # are retried with backoff: the live feed must never die silently.
+                if not isinstance(exc, (ProviderError, OSError, RedisError, SQLAlchemyError)):
+                    log.exception("unexpected feed error")
                 attempt += 1
                 self.status["reconnects"] += 1
                 await self._set_state("reconnecting", f"{type(exc).__name__}: {exc}")

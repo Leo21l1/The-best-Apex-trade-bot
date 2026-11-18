@@ -123,6 +123,7 @@ async def readiness(
         "drawdown_room": float(st.drawdown_room) if st.drawdown_room is not None else None,
         "rules_verified": st.rules_verified,
         "stale": st.stale,
+        "snapshot_at": st.snapshot_at.isoformat() if st.snapshot_at else None,
     }
     setup = signal_setup(await active_signal(session, provider, symbol, now))
     checklist = evaluate(symbol, now, bars, config(style), setup, data, news, risk)

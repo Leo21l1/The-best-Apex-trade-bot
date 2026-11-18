@@ -27,6 +27,7 @@ x-api-env: &api-env
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-apex}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apex_dev_password}
@@ -41,6 +42,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes: [redisdata:/data]
     healthcheck:
@@ -50,6 +52,7 @@ services:
 
   api:
     build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    restart: unless-stopped
     environment: *api-env
     depends_on:
       postgres: { condition: service_healthy }
@@ -58,6 +61,7 @@ services:
 
   worker:
     build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+    restart: unless-stopped
     command: ["python", "-m", "app.workers.main"]
     environment: *api-env
     healthcheck: { disable: true }
@@ -65,6 +69,7 @@ services:
       api: { condition: service_healthy }
 
   web:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: infrastructure/docker/web.Dockerfile

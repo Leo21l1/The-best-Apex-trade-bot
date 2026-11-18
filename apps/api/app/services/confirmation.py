@@ -744,6 +744,10 @@ def decide(
         "news_status": "NEWS STATUS UNKNOWN" if by["news"]["status"] == UNKNOWN else ns.upper() if ns else None,
         "next_eligible_window": nxt,
         "regime": regime,
+        "current_price": price,
+        "config": (history or {}).get("config") or (live_config_key(cfg.min_rr) if signal else None),
+        "account_snapshot_at": (readiness.get("risk") or {}).get("snapshot_at"),
+        "actionable": state in (LONG_READY, SHORT_READY),
         "evidence_classification": (history or {}).get("evidence")
         or ("No active setup" if not signal else (history or {}).get("reason") or "Insufficient evidence"),
         "evidence_required_for_ready": require_validated,

@@ -266,6 +266,9 @@ async def lab_jobs(stop: asyncio.Event, interval_s: float = 2.0) -> None:
             pass
 
 
+failed_task: list[str] = []
+
+
 async def run(stop: asyncio.Event) -> None:
     log_event(log, "worker started")
     ingestion = start_ingestion(stop)
@@ -274,7 +277,32 @@ async def run(stop: asyncio.Event) -> None:
     lab = asyncio.create_task(lab_jobs(stop))
     news = asyncio.create_task(news_poll(stop))
     scanner = asyncio.create_task(ScannerService(get_settings(), get_sessionmaker(), get_redis()).run(stop))
+    named = {
+        "ingestion": ingestion,
+        "scanner": scanner,
+        "calendar": calendar,
+        "forexfactory": ff,
+        "lab": lab,
+        "news": news,
+    }
     while not stop.is_set():
+        # Supervision: a long-running task that ends while the worker is running means something broke.
+        # Exit non-zero so Docker (restart: unless-stopped) restarts the worker, instead of reporting a
+        # healthy heartbeat with a dead live feed. Tasks that end immediately because they are not
+        # configured (no calendar URLs, provider "none") return None or finish cleanly and are ignored.
+        for name, t in named.items():
+            if t is not None and t.done() and not t.cancelled() and t.exception() is not None:
+                log_event(
+                    log,
+                    "worker task crashed; exiting so the container restarts",
+                    level=logging.ERROR,
+                    task=name,
+                    error=type(t.exception()).__name__,
+                )
+                stop.set()
+                failed_task.append(name)
+        if stop.is_set():
+            break
         try:
             await heartbeat_once()
         except (RedisError, OSError) as exc:
@@ -305,6 +333,8 @@ def main() -> None:
         await run(stop)
 
     asyncio.run(_main())
+    if failed_task:
+        raise SystemExit(1)  # non-zero: Docker restarts the worker
 
 
 if __name__ == "__main__":

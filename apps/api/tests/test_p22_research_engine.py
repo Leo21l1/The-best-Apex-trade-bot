@@ -225,9 +225,12 @@ def test_ready_requires_validated_evidence_when_configured() -> None:
             require_validated=req,
         )
 
-    assert run(None, False)["state"] == "LONG READY"
+    ready = run(None, False)
+    assert ready["state"] == "LONG READY" and ready["actionable"] is True and ready["current_price"] is not None
+    assert ready["config"] == "t1_net15"
     gated = run(None, True)
     assert gated["state"] == "WAIT" and any(m["key"] == "history" for m in gated["missing"])
+    assert gated["actionable"] is False
     promising = {"available": True, "evidence": "Promising but unvalidated", "unmet": ["holdout"], "config": "t1_net15"}
     assert run(promising, True)["state"] == "WAIT"
     ok = {

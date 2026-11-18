@@ -231,3 +231,37 @@ async def test_api_coverage_compare_progress(admin_client: httpx.AsyncClient) ->
     assert (await admin_client.get("/api/backtests/0")).status_code == 422
     async with get_sessionmaker()() as s:
         assert (await s.scalars(select(BacktestRun.status))).all() == ["done"]
+
+
+async def test_worker_exits_nonzero_when_a_long_running_task_crashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (launch review): a crashed task (e.g. the live feed) left the worker running with a green
+    heartbeat; now the worker stops and exits non-zero so Docker's restart policy brings it back."""
+    import asyncio
+
+    import app.workers.main as wm
+
+    async def boom(stop: asyncio.Event) -> None:
+        raise RuntimeError("feed task crashed")
+
+    async def idle(stop: asyncio.Event) -> None:
+        await stop.wait()
+
+    class Scanner:
+        def __init__(self, *a: object) -> None:
+            pass
+
+        async def run(self, stop: asyncio.Event) -> None:
+            await stop.wait()
+
+    monkeypatch.setattr(wm, "start_ingestion", lambda stop: asyncio.create_task(boom(stop)))
+    for name in ("calendar_sync", "forexfactory_sync", "lab_jobs", "news_poll"):
+        monkeypatch.setattr(wm, name, idle)
+    monkeypatch.setattr(wm, "ScannerService", Scanner)
+    monkeypatch.setattr(wm, "HEARTBEAT_INTERVAL_S", 0.05)
+    monkeypatch.setattr(wm, "close_redis", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(wm, "dispose_engine", lambda: asyncio.sleep(0))
+    wm.failed_task.clear()
+    stop = asyncio.Event()
+    await asyncio.wait_for(wm.run(stop), timeout=10)
+    assert wm.failed_task == ["ingestion"] and stop.is_set()
+    wm.failed_task.clear()

@@ -664,6 +664,26 @@ async def research_study_cmd(
     return 0
 
 
+async def preflight_cmd(symbols: list[str]) -> int:
+    """Morning preflight (read-only): PASS / WARN / FAIL for everything the 9:00 ET workflow needs."""
+    from app.services.preflight import run_preflight
+
+    async with get_sessionmaker()() as session:
+        rep = await run_preflight(session, symbols)
+    print(f"PROJECT APEX preflight - {rep.get('ny_time', rep['at'])}")
+    for c in rep["checks"]:
+        print(f"  [{c['result']:4}] {c['check']}: {c['detail']}")
+    print(
+        "RESULT: "
+        + (
+            "no blocking failures"
+            if rep["ok"]
+            else "FAILURES above: actionable READY signals are blocked until they are fixed"
+        )
+    )
+    return 0 if rep["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="apex")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -694,6 +714,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also re-request sessions downloaded before that are still incomplete (shown in the estimate)",
     )
+    pf = sub.add_parser("preflight", help="Morning readiness report (read-only): services, live data, risk, news")
+    pf.add_argument("--symbols", default="ES,NQ")
     si = sub.add_parser("strategy-inventory", help="Write the strategy inventory (generated from the code)")
     si.add_argument("--out", default="docs/strategy-inventory.md")
     rs = sub.add_parser("research-study", help="Full walk-forward research study (all strategies, ES/NQ)")
@@ -743,6 +765,8 @@ def main(argv: list[str] | None = None) -> int:
                     args.accept_unknown_cost,
                     args.include_partial,
                 )
+            if args.cmd == "preflight":
+                return await preflight_cmd([x.strip().upper() for x in args.symbols.split(",") if x.strip()])
             if args.cmd == "strategy-inventory":
                 from pathlib import Path
 

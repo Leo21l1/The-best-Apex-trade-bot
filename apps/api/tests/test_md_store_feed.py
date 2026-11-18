@@ -281,3 +281,27 @@ async def test_gap_inputs_from_store() -> None:
         await s.commit()
         times = await bar_times(s, "test", "ES", T0, T0 + timedelta(minutes=5))
     assert [t.minute for t in times] == [0, 3]
+
+
+async def test_feed_survives_a_database_error_instead_of_dying() -> None:
+    """Regression (launch review): a database error while storing a live bar (e.g. PostgreSQL restarting)
+    ended the ingestion task for good while the worker heartbeat stayed green."""
+    from sqlalchemy.exc import OperationalError
+
+    sim = SimulatedProvider(clock=lambda: NOW, tick_seconds=0)
+    svc = service(sim)
+    stop = asyncio.Event()
+    calls = {"n": 0}
+    original = svc.handle
+
+    async def flaky(candle: Candle) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OperationalError("INSERT", {}, Exception("connection was closed"))
+        if calls["n"] >= 3:
+            stop.set()
+        return await original(candle)
+
+    svc.handle = flaky  # type: ignore[method-assign]
+    await asyncio.wait_for(svc.run(stop), timeout=20)  # returns normally once stopped: the task did not die
+    assert calls["n"] >= 3 and svc.status["reconnects"] >= 1

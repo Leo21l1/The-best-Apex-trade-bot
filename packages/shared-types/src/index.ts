@@ -1194,6 +1194,14 @@ export interface EntryConfirmation {
   news_status: string | null;
   next_eligible_window: EligibleWindow | null;
   regime: { labels: string[]; evidence?: Record<string, unknown> } | null;
+  /** Last completed 1-minute close the evaluation used. */
+  current_price?: number | null;
+  /** Pre-registered study configuration matching the live gate (e.g. t1_net15). */
+  config?: string | null;
+  /** Time of the account snapshot the Risk Guardian used (null = none). */
+  account_snapshot_at?: string | null;
+  /** True only for LONG READY / SHORT READY. Everything else is informational. */
+  actionable?: boolean;
   /** Research-study classification of this strategy for the configuration the live gate uses. */
   evidence_classification?: string;
   evidence_required_for_ready?: boolean;
