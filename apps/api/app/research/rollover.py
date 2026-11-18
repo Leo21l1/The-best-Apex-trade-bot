@@ -131,8 +131,12 @@ def segments(
             for d in _sessions_around(symbol, sw, PRE_SESSIONS, POST_SESSIONS):
                 excl[d] = f"roll window around the actual switch on {sw.isoformat()} ({old} -> {new})"
 
+        for d in sorted({trading_day(b.ts) for b in bars}):
+            if d.isoformat() not in contract_map and d not in excl:
+                excl[d] = "no actual contract mapping for this date (never filled from the calendar)"
+
         def contract_of(d: date) -> str:
-            return contract_map.get(d.isoformat()) or front_contract(symbol, d) + " (inferred)"
+            return contract_map[d.isoformat()]
     else:
         excl = excluded_dates(symbol, first, last)
 

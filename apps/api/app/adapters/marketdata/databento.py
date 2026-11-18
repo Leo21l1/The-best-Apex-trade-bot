@@ -176,36 +176,80 @@ class DatabentoProvider(MarketDataProvider):
     async def _get(self, path: str, params: dict[str, Any]) -> httpx.Response:
         return await self._request("GET", path, params)
 
-    async def resolve_contracts(self, symbol: str, start: date, end: date) -> dict[str, str]:
-        """Actual contract behind the continuous symbol per date (``symbology.resolve``, metadata - not
-        a data download). Intervals are [d0, d1). Returns {"YYYY-MM-DD": "ESZ6", ...}."""
+    async def _symbology(
+        self, symbols: Sequence[str], stype_in: str, stype_out: str, start: date, end: date, stage: str
+    ) -> dict[str, list[tuple[date, date, str]]]:
+        """One ``symbology.resolve`` call (metadata - no market data is downloaded), the same POST the
+        official ``databento.Historical().symbology.resolve`` client sends. Returns, per input symbol,
+        the [d0, d1) intervals with a non-empty output symbol."""
         r = await self._request(
             "POST",
             "/v0/symbology.resolve",
             {
                 "dataset": DATASET,
-                "symbols": self.continuous(symbol),
-                "stype_in": "continuous",
-                "stype_out": "raw_symbol",
+                "symbols": ",".join(symbols),
+                "stype_in": stype_in,
+                "stype_out": stype_out,
                 "start_date": start.isoformat(),
                 "end_date": end.isoformat(),
             },
         )
         if r.status_code >= 400:
             case, msg = error_detail(r, self._key)
-            raise ProviderError(f"Databento symbology HTTP {r.status_code} {case}: {msg}")
+            raise ProviderRequestError(
+                f"Databento symbology {stage} ({stype_in} -> {stype_out}) failed: HTTP {r.status_code} {case}: {msg}"
+            )
         try:
             body = r.json()
-            intervals = (body.get("result") or {}).get(self.continuous(symbol)) or []
-        except (ValueError, AttributeError) as exc:
-            raise ProviderError("unexpected Databento symbology response") from exc
-        out: dict[str, str] = {}
-        for iv in intervals:
-            d, d1, sym = date.fromisoformat(str(iv["d0"])[:10]), date.fromisoformat(str(iv["d1"])[:10]), str(iv["s"])
-            while d < d1:
-                out[d.isoformat()] = sym
-                d += timedelta(days=1)
+            result = body["result"]
+            out: dict[str, list[tuple[date, date, str]]] = {}
+            for sym_in, entries in result.items():
+                out[str(sym_in)] = [
+                    (date.fromisoformat(str(e["d0"])[:10]), date.fromisoformat(str(e["d1"])[:10]), str(e["s"]))
+                    for e in entries
+                    if e.get("s") not in (None, "")
+                ]
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ProviderError(f"Databento symbology {stage}: unexpected response ({type(exc).__name__})") from exc
         return out
+
+    async def resolve_contracts(self, symbol: str, start: date, end: date) -> dict[str, Any]:
+        """Actual contract behind the continuous symbol per UTC date, in two supported stages:
+
+        1. ``continuous`` -> ``instrument_id`` for ``ROOT.v.0`` (date-dependent intervals);
+        2. ``instrument_id`` -> ``raw_symbol`` for those ids (e.g. ``ESZ6``).
+        (``continuous`` -> ``raw_symbol`` is not a supported combination: HTTP 422.)
+        Dates the two stages cannot both cover are returned in ``unresolved`` - never filled from the
+        calendar. ``end`` is exclusive."""
+        cont = self.continuous(symbol)
+        stage1 = (await self._symbology([cont], "continuous", "instrument_id", start, end, "stage 1")).get(cont, [])
+        if not stage1:
+            raise ProviderRequestError(
+                f"Databento symbology stage 1 returned no instrument ids for {cont} between {start} and {end}"
+            )
+        ids = sorted({iid for _, _, iid in stage1})
+        stage2 = await self._symbology(ids, "instrument_id", "raw_symbol", start, end, "stage 2")
+        daily: dict[str, str] = {}
+        ids_by_day: dict[str, str] = {}
+        unresolved: list[str] = []
+        for d0, d1, iid in stage1:
+            d = d0
+            while d < min(d1, end):
+                raw = next((s for a, b, s in stage2.get(iid, []) if a <= d < b), None)
+                if raw:
+                    daily[d.isoformat()] = raw
+                    ids_by_day[d.isoformat()] = iid
+                else:
+                    unresolved.append(d.isoformat())
+                d += timedelta(days=1)
+        return {
+            "continuous": cont,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "map": daily,
+            "instrument_ids": ids_by_day,
+            "unresolved": sorted(unresolved),
+        }
 
     async def _request(self, method: str, path: str, params: dict[str, Any]) -> httpx.Response:
         """GET with bounded retries and exponential backoff (1 + ``max_retries`` attempts at most).

@@ -425,42 +425,136 @@ async def backfill_cmd(
     return 0
 
 
+async def _verify_map(sym: str, mapping: dict[str, str], days: int) -> dict[str, Any]:
+    """Check an actual contract map against the stored history (database only, no downloads)."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.config import get_settings
+    from app.research.contract_map import verify
+    from app.research.data_audit import audit_bars
+    from app.research.scanner import load_bars
+
+    s = get_settings()
+    now = datetime.now(UTC)
+    async with get_sessionmaker()() as session:
+        bars = await load_bars(session, s.market_data_provider, sym, now - timedelta(days=days), now)
+    usable = audit_bars(sym, bars, now - timedelta(days=days), now).get("usable_session_dates", [])
+    v = verify(sym, mapping, bars, usable)
+    v["usable_sessions"] = len(usable)
+    return v
+
+
+def _print_verification(v: dict[str, Any]) -> None:
+    print(
+        f"   contracts {v['contracts']}; {v['usable_sessions']} usable stored sessions, "
+        f"{len(v['stored_trade_dates_unmapped'])} without a mapping"
+    )
+    for c in v["switches_vs_calendar"]:
+        print(
+            f"   switch {c['switch']} {c['from']} -> {c['to']}: calendar roll {c['calendar_roll']} "
+            f"({(c['days_from_calendar'] or 0):+d} days), inside the calendar exclusion window: "
+            f"{c['inside_calendar_window']}"
+        )
+    for x in v["discontinuities"]:
+        print(
+            f"   price gap {x['date']}: {x['gap_points']} pts (typical {x['typical_gap_points']}) - "
+            + ("at an actual contract switch" if x["at_actual_switch"] else "NOT explained by a contract switch")
+        )
+    for p in v["problems"]:
+        print(f"   PROBLEM: {p}")
+    if v["stored_trade_dates_unmapped"]:
+        print(f"   UNMAPPED usable sessions: {', '.join(v['stored_trade_dates_unmapped'][:10])}")
+
+
 async def contract_map_cmd(symbols: list[str], days: int, out: str) -> int:
-    """Actual contract per date from Databento symbology (metadata, not a data download), vs the calendar."""
+    """Actual contract per date from Databento symbology (metadata only: no market data is downloaded).
+
+    Two supported stages: continuous -> instrument_id, then instrument_id -> raw_symbol. The file is
+    written only when every symbol resolved and verified against the stored history; nothing is ever
+    filled from the roll calendar."""
     import json
     from datetime import UTC, datetime, timedelta
     from pathlib import Path
 
-    from app.adapters.marketdata.base import ProviderError
+    from app.adapters.marketdata.base import ProviderAuthError, ProviderError
+    from app.adapters.marketdata.databento import DATASET
     from app.core.config import get_settings
     from app.marketdata.factory import build_provider
-    from app.research.rollover import compare_to_calendar
+    from app.research.contract_map import build_document, validate_document
 
     s = get_settings()
     if s.market_data_provider != "databento":
-        print("contract-map needs the Databento provider.")
+        print("contract-map needs the Databento provider (APEX_MARKET_DATA_PROVIDER=databento).")
         return 1
     p = build_provider(s)
-    end = datetime.now(UTC).date()
-    maps: dict[str, dict[str, str]] = {}
+    end = datetime.now(UTC).date() + timedelta(days=1)  # exclusive: includes today
+    start = end - timedelta(days=days + 1)
+    resolved: dict[str, dict[str, Any]] = {}
+    failed = False
     try:
         for sym in symbols:
-            print(f"{sym}: resolving {p.continuous(sym)} {end - timedelta(days=days)} -> {end} ...", flush=True)
-            maps[sym] = await p.resolve_contracts(sym, end - timedelta(days=days), end)
-            for c in compare_to_calendar(sym, maps[sym]):
-                print(
-                    f"   switch {c['switch']} {c['from']} -> {c['to']}: calendar roll {c['calendar_roll']} "
-                    f"({c['days_from_calendar']:+d} days), inside exclusion window: {c['inside_calendar_window']}, "
-                    f"inferred contract matches: {c['inferred_contract_matches']}"
-                )
-    except ProviderError as exc:
-        print(f"FAILED: {exc}")
-        return 3
+            print(
+                f"{sym}: resolving {p.continuous(sym)} {start} -> {end} (exclusive): continuous -> instrument_id "
+                "-> raw_symbol ...",
+                flush=True,
+            )
+            try:
+                resolved[sym] = await p.resolve_contracts(sym, start, end)
+            except ProviderAuthError as exc:
+                print(f"   FAILED: {exc}. Check APEX_DATABENTO_API_KEY and its GLBX.MDP3 entitlement.")
+                failed = True
+            except ProviderError as exc:
+                print(f"   FAILED: {exc}")
+                failed = True
     finally:
         await p.aclose()
-    Path(out).write_text(json.dumps(maps, indent=1))  # noqa: ASYNC240
-    print(f"Wrote {out}. Use it with: research-study --contract-map {out}")
+    if failed:
+        print(f"No contract map written ({out}): resolution failed. Nothing was downloaded or charged.")
+        return 3
+    bad = False
+    for sym in symbols:
+        print(f"== {sym} verification against the stored history")
+        v = await _verify_map(sym, resolved[sym]["map"], days)
+        _print_verification(v)
+        if v["problems"] or v["stored_trade_dates_unmapped"]:
+            bad = True
+    if bad:
+        print(f"No contract map written ({out}): fix the problems above (e.g. a larger --days range) and retry.")
+        return 4
+    doc = build_document(DATASET, datetime.now(UTC).isoformat(), resolved)
+    validate_document(json.loads(json.dumps(doc)), symbols)  # the file research-study will read
+    Path(out).write_text(json.dumps(doc, indent=1))  # noqa: ASYNC240
+    print(f"VALID contract map written to {out}. Use it with: research-study --contract-map {out}")
     return 0
+
+
+async def contract_map_verify_cmd(path: str, symbols: list[str], days: int) -> int:
+    """Validate a contract-map file and check it against the stored history (no network)."""
+    import json
+    from pathlib import Path
+
+    from app.research.contract_map import ContractMapError, validate_document
+
+    try:
+        maps = validate_document(json.loads(Path(path).read_text()), symbols)  # noqa: ASYNC240
+    except FileNotFoundError:
+        print(f"INVALID: {path} does not exist. Generate it with `python -m app.cli contract-map`.")
+        return 2
+    except (ContractMapError, json.JSONDecodeError) as exc:
+        print(f"INVALID: {exc}")
+        return 2
+    ok = True
+    for sym in symbols:
+        print(f"== {sym}")
+        v = await _verify_map(sym, maps[sym], days)
+        _print_verification(v)
+        ok = ok and not v["problems"] and not v["stored_trade_dates_unmapped"]
+    print(
+        "VALID: schema, contracts and coverage of every usable stored session"
+        if ok
+        else "INVALID: see the problems above"
+    )
+    return 0 if ok else 4
 
 
 async def research_audit_cmd(symbols: list[str], study_id: int | None, out_dir: str) -> int:
@@ -521,22 +615,38 @@ async def research_study_cmd(
             f"NOTE: backfill {job['id']} is still {job['status']}; results will be PRELIMINARY for the data "
             "stored so far. Re-run when it has finished."
         )
+    from app.research.contract_map import ContractMapError
+
     maps: dict[str, dict[str, str]] = {}
     if contract_map_path:
         import json
         from pathlib import Path
 
-        maps = json.loads(Path(contract_map_path).read_text())  # noqa: ASYNC240
+        from app.research.contract_map import validate_document
+
+        try:  # validated before any study work starts
+            maps = validate_document(json.loads(Path(contract_map_path).read_text()), symbols)  # noqa: ASYNC240
+        except FileNotFoundError:
+            print(f"Contract map {contract_map_path} not found. Generate it with `python -m app.cli contract-map`.")
+            return 2
+        except (ContractMapError, json.JSONDecodeError) as exc:
+            print(f"Invalid contract map {contract_map_path}: {exc}")
+            return 2
+        print(f"Contract map {contract_map_path}: valid for {', '.join(symbols)}")
     for sym in symbols:
-        sid, res = await run_and_store(
-            get_sessionmaker(),
-            sym,
-            days,
-            strategies,
-            workers,
-            progress=lambda m: print(m, flush=True),
-            contract_map=maps.get(sym),
-        )
+        try:
+            sid, res = await run_and_store(
+                get_sessionmaker(),
+                sym,
+                days,
+                strategies,
+                workers,
+                progress=lambda m: print(m, flush=True),
+                contract_map=maps.get(sym) if contract_map_path else None,
+            )
+        except ContractMapError as exc:
+            print(f"Study for {sym} not started: {exc}")
+            return 2
         files = write_artifacts(res, out_dir)
         h = headline(res)
         print(
@@ -601,6 +711,10 @@ def main(argv: list[str] | None = None) -> int:
     cm.add_argument("--symbols", default="ES,NQ")
     cm.add_argument("--days", type=int, default=400)
     cm.add_argument("--out", default="contract_map.json")
+    cv = sub.add_parser("contract-map-verify", help="Validate a contract-map file against the stored history")
+    cv.add_argument("--file", default="contract_map.json")
+    cv.add_argument("--symbols", default="ES,NQ")
+    cv.add_argument("--days", type=int, default=400)
     rr = sub.add_parser("rr-study", help="Compare reward:risk configurations out of sample on stored bars")
     rr.add_argument("--symbol", default="ES")
     rr.add_argument("--days", type=int, default=60)
@@ -646,6 +760,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "research-audit":
                 syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
                 return await research_audit_cmd(syms, args.study_id, args.out_dir)
+            if args.cmd == "contract-map-verify":
+                syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+                return await contract_map_verify_cmd(args.file, syms, args.days)
             if args.cmd == "contract-map":
                 syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
                 return await contract_map_cmd(syms, args.days, args.out)

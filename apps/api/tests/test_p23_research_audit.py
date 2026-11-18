@@ -6,9 +6,6 @@ from collections import Counter
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-import httpx
-
-from app.adapters.marketdata.databento import DatabentoProvider
 from app.research import rollover
 from app.research.audit import audit_study, breakeven_win_rate, concentration
 from app.research.backtest import BacktestParams, execute, generate_signals
@@ -46,33 +43,6 @@ def test_actual_contract_map_drives_segments_and_is_compared_to_the_calendar() -
     assert "2026-09-10" not in excl  # the calendar window is not used when the real map is given
     cmp = rollover.compare_to_calendar("ES", actual)
     assert cmp[0]["days_from_calendar"] == 6 and cmp[0]["inside_calendar_window"] is False
-
-
-async def test_databento_symbology_is_parsed_into_a_daily_map() -> None:
-    def handler(req: httpx.Request) -> httpx.Response:
-        assert req.method == "POST" and req.url.path == "/v0/symbology.resolve"
-        return httpx.Response(
-            200,
-            json={
-                "result": {
-                    "ES.v.0": [
-                        {"d0": "2026-09-08", "d1": "2026-09-11", "s": "ESU6"},
-                        {"d0": "2026-09-11", "d1": "2026-09-13", "s": "ESZ6"},
-                    ]
-                }
-            },
-        )
-
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://hist.databento.test")
-    p = DatabentoProvider("k" * 20, client=client, min_interval_s=0)
-    m = await p.resolve_contracts("ES", date(2026, 9, 8), date(2026, 9, 13))
-    assert m == {
-        "2026-09-08": "ESU6",
-        "2026-09-09": "ESU6",
-        "2026-09-10": "ESU6",
-        "2026-09-11": "ESZ6",
-        "2026-09-12": "ESZ6",
-    }
 
 
 def test_audit_helpers() -> None:

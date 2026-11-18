@@ -188,6 +188,11 @@ def run_full_study(
     sims = quality == "simulated"
     start, end = requested or ((bars[0].ts, bars[-1].ts) if bars else (datetime.now(UTC), datetime.now(UTC)))
     audit = audit_bars(symbol, bars, start, end, provenance)
+    if contract_map is not None:
+        from app.research.contract_map import require_coverage
+
+        # Every usable session needs its actual contract; nothing is filled from the calendar.
+        require_coverage(symbol, contract_map, audit.get("usable_session_dates", []))
     segs, excluded = segments(symbol, bars, contract_map)
     usable = [d for d in audit.get("usable_session_dates", []) if d not in excluded]
     plan = plan_periods(usable)
@@ -300,6 +305,7 @@ def run_full_study(
             "generated_at": datetime.now(UTC).isoformat(),
             "data": audit,
             "rollover": {
+                "contract_source": "Databento symbology (actual)" if contract_map else "CME roll calendar (inferred)",
                 "excluded_sessions": excluded,
                 "segments": [
                     {"contract": c, "first": b[0].ts.isoformat(), "last": b[-1].ts.isoformat(), "bars": len(b)}

@@ -21,7 +21,11 @@ Nothing here places orders. Live Apex/Tradovate execution stays disabled; the Ri
   flat by 15:55 ET). Fills and P&L use the real, unadjusted prices of the traded contract.
 * The contract label (e.g. `ESZ6`) is **inferred** from the roll calendar unless an actual map is
   supplied: `python -m app.cli contract-map` asks Databento `symbology.resolve` (metadata, not a data
-  download) which contract `ROOT.v.0` pointed to on each date, compares every switch with the calendar,
+  download) in two supported stages - `continuous -> instrument_id`, then `instrument_id -> raw_symbol`
+  (`continuous -> raw_symbol` is rejected by Databento with HTTP 422) - which contract `ROOT.v.0`
+  pointed to on each UTC date, verifies it against the stored bars (unmapped usable sessions,
+  contracts that flip back, non-quarterly contracts, price gaps not at an actual switch), writes a
+  versioned file (`schema: apex.contract_map`, `version: 1`) only when everything checks out, compares every switch with the calendar,
   and `research-study --contract-map contract_map.json` then excludes windows around the ACTUAL switch
   dates and labels segments with the actual contracts. Stored bars do not carry the contract id. `detect_discontinuities` checks the data independently: a session-open gap larger
   than 8x the median outside a roll window is reported as an unexplained discontinuity.
@@ -115,6 +119,7 @@ list / negative evidence). It never upgrades a classification.
 docker compose exec api python -m app.cli data-audit --symbols ES,NQ --days 400
 docker compose exec api python -m app.cli strategy-inventory --out /tmp/strategy-inventory.md
 docker compose exec api python -m app.cli contract-map --symbols ES,NQ --days 400 --out /tmp/contract_map.json
+docker compose exec api python -m app.cli contract-map-verify --file /tmp/contract_map.json --symbols ES,NQ --days 400
 docker compose exec api python -m app.cli research-study --symbols ES,NQ --days 400 --workers 2 --out-dir /tmp/research_out --contract-map /tmp/contract_map.json
 docker compose exec api python -m app.cli research-audit --symbols ES,NQ --out-dir /tmp/research_out
 docker compose cp api:/tmp/research_out ./research_out
