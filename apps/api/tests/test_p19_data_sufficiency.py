@@ -54,13 +54,10 @@ async def test_signal_funnel_accounts_for_every_evaluation() -> None:
         st: Counter[str] = Counter()
         trades = simulate(p, bars, st)
         no_signal = sum(v for k, v in st.items() if k.startswith("no signal"))
-        rejected = sum(v for k, v in st.items() if k.startswith("signal rejected"))
+        rejected = sum(v for k, v in st.items() if k.startswith(("signal rejected", "signal skipped")))
         assert st["evaluated"] == no_signal + st["signals"]
         assert st["signals"] == st["trades"] + rejected and st["trades"] == len(trades)
-        assert (
-            st["5m bars"]
-            == st["evaluated"] + st["outside evaluation window (09:35-15:30 ET)"] + st["position already open"]
-        )
+        assert st["5m bars"] == st["evaluated"] + st["outside evaluation window (09:35-15:30 ET)"]
     assert st["signal rejected: net R:R below 1.5"] > 0 and st["trades"] == 0  # vwap_trend T1 is 1R by design
 
 

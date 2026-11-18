@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     #: Minimum NET reward:risk to Target 1 (after commission and slippage) for the readiness checklist and
     #: the entry confirmation. Conservative default; lowering it is a deliberate risk decision.
     min_net_reward_risk: float = Field(default=1.5, ge=1.0, le=5.0)
+    #: READY only for strategies whose latest research study classifies them "Validated for paper-trading
+    #: consideration" (for the configuration matching the live gate). Otherwise the confirmation says WAIT
+    #: and explains which evidence is missing. Turning this off is a deliberate decision.
+    require_validated_strategy: bool = True
 
     # Risk (Phase 4)
     # An account snapshot older than this while the market is open is treated as stale.

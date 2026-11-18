@@ -108,6 +108,9 @@ export function EntryConfirmationPanel({ symbol, refreshKey }: { symbol: string;
             <dt className="text-faint">Instrument</dt><dd className="font-mono">{c.symbol}{c.contract ? ` · ${c.contract}` : ""}{c.strategy_id ? ` · ${c.strategy_id}` : ""}{c.direction ? ` · ${c.direction}` : ""}</dd>
             <dt className="text-faint">As of</dt><dd className="font-mono">{c.ny_time}{c.data_timestamp ? ` · bar ${formatEt(c.data_timestamp)}` : ""}</dd>
             {c.regime && <><dt className="text-faint">Regime</dt><dd>{c.regime.labels.join(", ")}</dd></>}
+            {c.evidence_classification && (
+              <><dt className="text-faint">Historical evidence</dt><dd data-testid="confirm-evidence">{c.evidence_classification}{c.evidence_required_for_ready ? " (required for READY)" : ""} · <Link className="text-accent hover:underline" href="/research">research</Link></dd></>
+            )}
             {c.next_eligible_window && !c.next_eligible_window.now && (
               <><dt className="text-faint">Next eligible window</dt><dd className="font-mono" data-testid="confirm-next-window">{c.next_eligible_window.date} {c.next_eligible_window.start_et}–{c.next_eligible_window.end_et} ET{c.next_eligible_window.in_minutes != null ? ` (in ${c.next_eligible_window.in_minutes} min)` : ""}</dd></>
             )}

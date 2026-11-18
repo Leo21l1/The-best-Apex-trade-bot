@@ -36,6 +36,8 @@ export const NAV: NavItem[] = [
     summary: "Results by period, strategy, instrument, time of day and news, with sample sizes and rule adherence." },
   { href: "/strategies", label: "Strategy Laboratory", key: "s", group: "Research", phase: 3,
     summary: "Strategy specifications, validation status and eligibility." },
+  { href: "/research", label: "Strategy Research", key: "q", group: "Research", phase: 14,
+    summary: "Walk-forward study of every strategy on ES/NQ: win-rate and expectancy leaderboards with confidence intervals, stress tests and Apex evaluation replay." },
   { href: "/backtesting", label: "Backtesting", key: "b", group: "Research", phase: 6,
     summary: "Event-driven backtests, walk-forward and Monte Carlo analysis." },
   { href: "/paper", label: "Paper Simulator", key: "m", group: "Research", phase: 6,

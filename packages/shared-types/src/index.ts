@@ -1194,6 +1194,9 @@ export interface EntryConfirmation {
   news_status: string | null;
   next_eligible_window: EligibleWindow | null;
   regime: { labels: string[]; evidence?: Record<string, unknown> } | null;
+  /** Research-study classification of this strategy for the configuration the live gate uses. */
+  evidence_classification?: string;
+  evidence_required_for_ready?: boolean;
   expires_at: string | null;
   disclaimer: string;
 }

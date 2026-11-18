@@ -159,6 +159,7 @@ def decide(
     regime: dict[str, Any] | None = None,
     cfg: ChecklistConfig = ChecklistConfig(),
     style: str = "intraday",
+    require_validated: bool = False,
 ) -> dict[str, Any]:
     inst = INSTRUMENTS[symbol]
     tick = float(inst.tick_size)
@@ -647,34 +648,46 @@ def decide(
             )
         )
 
-    # 15. Historical performance (optional by default)
+    # 15. Historical evidence from the latest research study, for the configuration the live gate uses
     h = history or {}
+    ev = h.get("evidence")
     if not h.get("available"):
         conds.append(
             _c(
                 "history",
                 UNKNOWN,
-                h.get("reason") or "No completed backtest on stored data for this strategy and instrument.",
+                h.get("reason") or "No research study for this strategy and instrument.",
+                h,
+                confirm="a research study classifying this strategy as validated",
+            )
+        )
+    elif ev == "Validated for paper-trading consideration":
+        conds.append(
+            _c(
+                "history",
+                PASS,
+                f"{ev} ({h.get('config')}, {h.get('wf_trades')} out-of-sample trades, study #{h.get('study_id')}).",
                 h,
             )
         )
+    elif ev == "Negative evidence":
+        conds.append(_c("history", FAIL, f"{ev}: {'; '.join(h.get('unmet') or [])}", h))
     else:
-        oos = h.get("out_of_sample") or {}
-        n, exp = oos.get("trades") or 0, oos.get("expectancy")
-        if n < 30:
-            conds.append(_c("history", UNKNOWN, f"Only {n} out-of-sample trades; at least 30 needed.", h))
-        elif exp is not None and exp > 0:
-            conds.append(
-                _c("history", PASS, f"Out-of-sample expectancy ${exp} over {n} trades ({h.get('data_class')}).", h)
+        conds.append(
+            _c(
+                "history",
+                WAIT,
+                f"{ev}: {'; '.join((h.get('unmet') or [])[:3])}",
+                h,
+                confirm="all pre-registered out-of-sample and stress requirements",
             )
-        else:
-            conds.append(_c("history", FAIL, f"Out-of-sample expectancy ${exp} over {n} trades: not positive.", h))
+        )
 
     # Order as declared and classify
     order = {k: i for i, (k, _) in enumerate(CONDITIONS)}
     conds.sort(key=lambda c: order[c["key"]])
     strategy_id = signal.get("strategy_id") if signal else None
-    mand = mandatory_for(strategy_id)
+    mand = mandatory_for(strategy_id) | ({"history"} if require_validated else frozenset())
     for c in conds:
         c["mandatory"] = c["key"] in mand
     by = {c["key"]: c for c in conds}
@@ -731,6 +744,9 @@ def decide(
         "news_status": "NEWS STATUS UNKNOWN" if by["news"]["status"] == UNKNOWN else ns.upper() if ns else None,
         "next_eligible_window": nxt,
         "regime": regime,
+        "evidence_classification": (history or {}).get("evidence")
+        or ("No active setup" if not signal else (history or {}).get("reason") or "Insufficient evidence"),
+        "evidence_required_for_ready": require_validated,
         "volatility": volatility,
         "expires_at": expiry.isoformat() if expiry else None,
         "disclaimer": "Analysis only: PROJECT APEX never submits, modifies or cancels orders. READY means the "
@@ -741,38 +757,44 @@ def decide(
 # --- async gathering ----------------------------------------------------------------------------
 
 
-async def latest_history(session: Any, strategy_id: str | None, symbol: str) -> dict[str, Any]:
-    from sqlalchemy import select
+def live_config_key(min_net_rr: float) -> str:
+    """The pre-registered study configuration matching the live gate (exit at T1, net R:R minimum)."""
+    return {1.5: "t1_net15", 1.2: "t1_net12"}.get(round(min_net_rr, 2), "t1_all")
 
-    from app.models.research import BacktestRun
+
+async def latest_history(session: Any, strategy_id: str | None, symbol: str, min_net_rr: float = 1.5) -> dict[str, Any]:
+    from app.services.research_study import latest
 
     if not strategy_id:
         return {"available": False, "reason": "No active strategy."}
-    run = await session.scalar(
-        select(BacktestRun)
-        .where(BacktestRun.strategy_id == strategy_id, BacktestRun.symbol == symbol, BacktestRun.status == "done")
-        .order_by(BacktestRun.finished_at.desc())
-        .limit(1)
+    study = await latest(session, symbol)
+    if study is None:
+        return {"available": False, "reason": f"No research study for {symbol} yet (python -m app.cli research-study)."}
+    key = live_config_key(min_net_rr)
+    row = next(
+        (r for r in study.result.get("rows", []) if r["strategy_id"] == strategy_id and r["config"] == key), None
     )
-    if run is None or not run.result:
-        return {"available": False, "reason": f"No completed backtest for {strategy_id} on {symbol}."}
-    res = run.result
-    dc = res.get("data_class") or run.provider
-    if dc == "simulated" or run.provider == "simulated":
+    if row is None:
         return {
             "available": False,
-            "reason": "Only a SIMULATED-data backtest exists; it says nothing about the real market.",
-            "run_id": run.id,
-            "data_class": "SIMULATED",
+            "reason": f"Study #{study.id} did not test {strategy_id} ({key}).",
+            "study_id": study.id,
         }
+    wf = row["walk_forward"]["all"]
     return {
         "available": True,
-        "run_id": run.id,
-        "data_class": str(dc).upper(),
-        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-        "in_sample": res.get("in_sample"),
-        "out_of_sample": res.get("out_of_sample"),
-        "segments": res.get("segments"),
+        "study_id": study.id,
+        "study_at": study.created_at.isoformat(),
+        "data_class": study.data_class,
+        "preliminary": study.result.get("plan", {}).get("preliminary"),
+        "config": key,
+        "evidence": row["evidence"],
+        "unmet": row.get("unmet_requirements", []),
+        "wf_trades": wf["trades"],
+        "wf_win_rate": wf["win_rate"],
+        "wf_win_rate_ci95": wf["win_rate_ci95"],
+        "wf_expectancy": wf["expectancy"],
+        "wf_expectancy_ci": wf["expectancy_ci"],
     }
 
 
@@ -852,7 +874,7 @@ async def confirmation(
     rvol = ((rd.get("checklist") or {}).get("relative_volume") or {}).get("ratio")
     crosses = ((rd.get("checklist") or {}).get("regime") or {}).get("vwap_crosses_today")
     regime = regime_profile(bars, now, a5.trend if a5 else None, recent_choch, crosses, rvol) if bars else None
-    hist = await latest_history(session, setup.get("strategy_id") if setup else None, symbol)
+    hist = await latest_history(session, setup.get("strategy_id") if setup else None, symbol, s.min_net_reward_risk)
     from app.services.readiness import config as checklist_config
 
     out = decide(
@@ -869,6 +891,7 @@ async def confirmation(
         regime,
         cfg=checklist_config(style),
         style=style,
+        require_validated=s.require_validated_strategy,
     )
     out["contract"] = ((await _feed_contracts()).get(symbol) or {}).get("contract")
     out["provider"] = provider

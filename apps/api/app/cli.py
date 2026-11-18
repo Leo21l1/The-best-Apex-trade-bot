@@ -50,7 +50,8 @@ async def reset_db() -> int:
     async with get_engine().begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE backtest_runs, paper_accounts, journal_trades, journal_edits, trade_plans, news_items, "
+                "TRUNCATE backtest_runs, research_studies, paper_accounts, journal_trades, journal_edits, trade_plans, "
+                "news_items, "
                 "copilot_exchanges, "
                 "economic_events, "
                 "account_snapshots, rules, alerts, signals, "
@@ -424,6 +425,45 @@ async def backfill_cmd(
     return 0
 
 
+async def research_study_cmd(
+    symbols: list[str], days: int, strategies: list[str] | None, workers: int, out_dir: str
+) -> int:
+    """Full research study per instrument: stores it for the dashboard and writes CSV/JSON/Markdown."""
+    from app.services.history import get_job
+    from app.services.research_study import headline, run_and_store, write_artifacts
+    from app.strategies.library import STRATEGY_BY_ID
+
+    bad = [x for x in strategies or [] if x not in STRATEGY_BY_ID]
+    if bad:
+        print(f"Unknown strategies: {bad}. Known: {sorted(STRATEGY_BY_ID)}")
+        return 2
+    job = await get_job()
+    if job and job["status"] in ("queued", "running"):
+        print(
+            f"NOTE: backfill {job['id']} is still {job['status']}; results will be PRELIMINARY for the data "
+            "stored so far. Re-run when it has finished."
+        )
+    for sym in symbols:
+        sid, res = await run_and_store(
+            get_sessionmaker(), sym, days, strategies, workers, progress=lambda m: print(m, flush=True)
+        )
+        files = write_artifacts(res, out_dir)
+        h = headline(res)
+        print(
+            f"== {sym}: study #{sid} stored; data {res['data_class']}, {res['data']['usable_sessions']} usable "
+            f"sessions, plan: {res['plan']['rule']}"
+        )
+        for k in ("highest_win_rate", "strongest_expectancy", "reason"):
+            if h.get(k):
+                print(f"   {h[k]}")
+        counts: dict[str, int] = {}
+        for r in res["rows"]:
+            counts[r["evidence"]] = counts.get(r["evidence"], 0) + 1
+        print(f"   evidence: {counts}")
+        print("   files: " + ", ".join(files))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="apex")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -454,6 +494,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also re-request sessions downloaded before that are still incomplete (shown in the estimate)",
     )
+    si = sub.add_parser("strategy-inventory", help="Write the strategy inventory (generated from the code)")
+    si.add_argument("--out", default="docs/strategy-inventory.md")
+    rs = sub.add_parser("research-study", help="Full walk-forward research study (all strategies, ES/NQ)")
+    rs.add_argument("--symbols", default="ES,NQ")
+    rs.add_argument("--days", type=int, default=400)
+    rs.add_argument("--strategies", default="", help="Comma-separated ids; empty = every eligible strategy")
+    rs.add_argument("--workers", type=int, default=2, help="Parallel processes (one strategy each)")
+    rs.add_argument("--out-dir", default="research_out")
     rr = sub.add_parser("rr-study", help="Compare reward:risk configurations out of sample on stored bars")
     rr.add_argument("--symbol", default="ES")
     rr.add_argument("--days", type=int, default=60)
@@ -482,6 +530,18 @@ def main(argv: list[str] | None = None) -> int:
                     args.accept_unknown_cost,
                     args.include_partial,
                 )
+            if args.cmd == "strategy-inventory":
+                from pathlib import Path
+
+                from app.research.inventory import inventory, inventory_md
+
+                Path(args.out).write_text(inventory_md(inventory()))  # noqa: ASYNC240
+                print(f"Wrote {args.out}")
+                return 0
+            if args.cmd == "research-study":
+                strats = [x.strip() for x in args.strategies.split(",") if x.strip()] or None
+                syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+                return await research_study_cmd(syms, args.days, strats, max(1, min(args.workers, 8)), args.out_dir)
             if args.cmd == "rr-study":
                 syms = [x.strip() for x in args.strategies.split(",") if x.strip()]
                 return await rr_study_cmd(args.symbol.upper(), args.days, syms, args.out)

@@ -44,20 +44,11 @@ def required_rth_bars(symbol: str, d: date) -> int:
 
 
 def roll_dates(symbol: str, start: date, end: date) -> list[str]:
-    """Approximate quarterly roll dates (Thursday 8 days before the 3rd-Friday expiry) for equity-index
-    futures. Continuous front-month prices are NOT back-adjusted, so the roll is a price jump."""
-    root = symbol.lstrip("M") if symbol.startswith("M") and symbol not in ("MCL", "MGC") else symbol
-    if root not in ("ES", "NQ", "YM", "RTY", "2K"):
-        return []
-    out = []
-    for y in range(start.year, end.year + 1):
-        for m in (3, 6, 9, 12):
-            first = date(y, m, 1)
-            third_friday = first + timedelta(days=(4 - first.weekday()) % 7 + 14)
-            roll = third_friday - timedelta(days=8)
-            if start <= roll <= end:
-                out.append(roll.isoformat())
-    return out
+    """Quarterly roll dates in [start, end] from the rollover module (single source of truth).
+    Continuous front-month prices are NOT back-adjusted, so the roll is a price jump."""
+    from app.research.rollover import roll_dates as _rolls
+
+    return [d.isoformat() for d in _rolls(symbol, start, end) if start <= d <= end]
 
 
 def audit_bars(

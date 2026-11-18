@@ -12,6 +12,7 @@ from app.models.research import (
     JournalNote,
     JournalTrade,
     PaperAccount,
+    ResearchStudy,
     TradePlan,
 )
 from app.models.signal import AlertRow, SignalRow
@@ -31,6 +32,7 @@ __all__ = [
     "JournalTrade",
     "NewsItem",
     "PaperAccount",
+    "ResearchStudy",
     "Role",
     "RuleRow",
     "SignalRow",

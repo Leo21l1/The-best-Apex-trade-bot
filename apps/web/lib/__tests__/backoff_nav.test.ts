@@ -13,9 +13,9 @@ describe("backoffDelay", () => {
 
 describe("navigation", () => {
   it("exposes the dashboard pages with unique routes and shortcuts", () => {
-    expect(NAV).toHaveLength(18);
-    expect(new Set(NAV.map((n) => n.href)).size).toBe(18);
-    expect(new Set(NAV.map((n) => n.key)).size).toBe(18);
+    expect(NAV).toHaveLength(19);
+    expect(new Set(NAV.map((n) => n.href)).size).toBe(19);
+    expect(new Set(NAV.map((n) => n.key)).size).toBe(19);
     expect(navByKey("y")?.href).toBe("/system");
   });
   it("filters by label and summary", () => {

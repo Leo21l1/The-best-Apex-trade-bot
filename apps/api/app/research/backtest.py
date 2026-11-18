@@ -80,6 +80,9 @@ class BacktestParams:
     min_net_rr: float | None = None
     #: Which of the signal's targets the trade exits at (1 = T1, 2 = T2; falls back to T1 if there is no T2).
     exit_target: int = 1
+    #: Stress tests: extra adverse slippage on stop fills only, and entering N bars late.
+    stop_slippage_extra_ticks: float = 0.0
+    entry_delay_bars: int = 0
     #: Share of trading days (from the end) held out as out-of-sample.
     oos_fraction: float = 0.3
     walk_forward_folds: int = 4
@@ -113,6 +116,16 @@ class Trade:
     stop_ticks: float = 0.0
     planned_rr: float | None = None
     rvol: float | None = None
+    # Audit fields (USD, all contracts): price P&L at ideal fills, slippage cost, initial risk,
+    # max favourable / adverse excursion on 1-minute highs/lows from the entry bar to the exit bar.
+    symbol: str = ""
+    strategy_id: str = ""
+    contract: str = ""
+    gross_pnl: float = 0.0
+    slippage_usd: float = 0.0
+    risk_usd: float = 0.0
+    mfe_usd: float = 0.0
+    mae_usd: float = 0.0
 
 
 class _ReplayContext(MarketContext):
@@ -309,39 +322,37 @@ def _strategy(params: BacktestParams) -> Strategy:
     return s
 
 
-def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | None = None) -> list[Trade]:
-    """Run one configuration over ascending 1-minute bars and return the trades.
+@dataclass
+class SignalEvent:
+    """A strategy signal at a completed 5-minute close, with the context needed to execute it."""
 
-    ``stats`` (optional) counts every completed 5-minute bar by outcome, so a run with few or no
-    trades can be explained: outside the evaluation window, position already open, missing history,
-    the first strategy condition that failed, and each reason a signal did not become a trade."""
+    close_ts: datetime
+    signal: Any
+    atr: float | None
+    regime: str
+
+
+def generate_signals(
+    params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | None = None
+) -> tuple[Replayer, list[SignalEvent]]:
+    """Evaluate the strategy at every completed 5-minute close in the evaluation window.
+
+    Signals do not depend on the exit configuration, so they are generated once and executed under
+    many configurations and stress scenarios. Uses only bars that opened before each close."""
     st: Counter[str] = stats if stats is not None else Counter()
-    inst = INSTRUMENTS[params.symbol]
-    tick = float(inst.tick_size)
-    point_value = float(inst.point_value)
-    slip = params.slippage_ticks * tick
     strategy = _strategy(params)
     rp = Replayer(params.symbol, bars)
-    trades: list[Trade] = []
-    i = 0
-    n = len(rp.bars)
-    m5_closes = [b.ts + Timeframe.M5.delta for b in rp.series[Timeframe.M5]]
-    pos: dict[str, Any] | None = None
-
-    for close_ts in m5_closes:
+    events: list[SignalEvent] = []
+    for close_ts in (b.ts + Timeframe.M5.delta for b in rp.series[Timeframe.M5]):
         local = close_ts.astimezone(ET).time()
         st["5m bars"] += 1
         if not (EVAL_START <= local <= EVAL_END):
             st["outside evaluation window (09:35-15:30 ET)"] += 1
             continue
-        if pos is not None and close_ts <= pos["exit_after"]:
-            st["position already open"] += 1
-            continue
         st["evaluated"] += 1
         ctx = rp.context(close_ts)
         ev = strategy.evaluate(ctx)
-        sig = ev.signal
-        if sig is None:
+        if ev.signal is None:
             if ev.note:
                 key = "missing history" if "insufficient history" in ev.note else ev.note
                 st[f"no signal: {key}"] += 1
@@ -350,8 +361,37 @@ def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | 
                 st[f"no signal: condition '{failed}' failed"] += 1
             continue
         st["signals"] += 1
-        i = bisect.bisect_left(rp.times, close_ts)
-        if i >= n or rp.times[i] - close_ts > timedelta(minutes=2):
+        events.append(
+            SignalEvent(close_ts, ev.signal, ctx.atr14[-1] if ctx.atr14 else None, _regime_label(ctx.closes[-24:]))
+        )
+    return rp, events
+
+
+def execute(
+    params: BacktestParams,
+    rp: Replayer,
+    events: Sequence[SignalEvent],
+    stats: Counter[str] | None = None,
+    contract: str = "",
+) -> list[Trade]:
+    """Turn signals into trades: one position at a time, conservative fills (see execution_policy)."""
+    st: Counter[str] = stats if stats is not None else Counter()
+    inst = INSTRUMENTS[params.symbol]
+    tick = float(inst.tick_size)
+    point_value = float(inst.point_value)
+    slip = params.slippage_ticks * tick
+    stop_slip = (params.slippage_ticks + params.stop_slippage_extra_ticks) * tick
+    strategy = _strategy(params)
+    trades: list[Trade] = []
+    n = len(rp.bars)
+    pos: dict[str, Any] | None = None
+    for evn in events:
+        close_ts, sig = evn.close_ts, evn.signal
+        if pos is not None and close_ts <= pos["exit_after"]:
+            st["signal skipped: position already open"] += 1
+            continue
+        i = bisect.bisect_left(rp.times, close_ts) + params.entry_delay_bars
+        if i >= n or rp.times[i] - close_ts > timedelta(minutes=2 + params.entry_delay_bars):
             st["signal rejected: no next bar to fill on"] += 1
             continue  # no next bar to fill on (session end / data gap)
         s = 1 if sig.direction == "long" else -1
@@ -360,7 +400,7 @@ def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | 
         stop = sig.stop
         target = sig.targets[1] if params.exit_target == 2 and len(sig.targets) > 1 else sig.targets[0]
         if params.stop_atr:
-            a = ctx.atr14[-1] if ctx.atr14 else None
+            a = evn.atr
             if not a:
                 st["signal rejected: no ATR for the stop override"] += 1
                 continue  # no ATR yet: the override cannot be applied honestly
@@ -388,9 +428,9 @@ def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | 
                 break
             hit_stop = b.low <= stop if s == 1 else b.high >= stop
             hit_target = b.high >= target + tick if s == 1 else b.low <= target - tick
-            if hit_stop:
+            if hit_stop:  # checked first: a bar touching both is a loss (no intrabar order known)
                 gap = b.open < stop if s == 1 else b.open > stop
-                exit_price, exit_reason = (b.open if gap else stop) - s * slip, "stop"
+                exit_price, exit_reason = (b.open if gap else stop) - s * stop_slip, "stop"
                 break
             if hit_target:
                 exit_price, exit_reason = target, "target"
@@ -399,9 +439,23 @@ def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | 
         if exit_price is None:
             j = n - 1
             exit_price, exit_reason = rp.bars[j].close - s * slip, "data_end"
-        commission = 2 * params.commission_per_side * params.quantity
+        q = params.quantity
+        commission = 2 * params.commission_per_side * q
         risk = abs(entry - stop)
-        pnl = (exit_price - entry) * s * point_value * params.quantity - commission
+        pnl = (exit_price - entry) * s * point_value * q - commission
+        exit_slip_ticks = (
+            0.0
+            if exit_reason == "target"
+            else (params.slippage_ticks + (params.stop_slippage_extra_ticks if exit_reason == "stop" else 0.0))
+        )
+        slippage_usd = (params.slippage_ticks + exit_slip_ticks) * tick * point_value * q
+        held = rp.bars[i : j + 1]
+        if s == 1:
+            mfe = max(b.high for b in held) - entry
+            mae = entry - min(b.low for b in held)
+        else:
+            mfe = entry - min(b.low for b in held)
+            mae = max(b.high for b in held) - entry
         st["trades"] += 1
         trades.append(
             Trade(
@@ -415,28 +469,41 @@ def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | 
                 target=target,
                 exit=round(exit_price, 6),
                 exit_reason=exit_reason,
-                quantity=params.quantity,
+                quantity=q,
                 pnl=round(pnl, 2),
                 commission=round(commission, 2),
-                r=round(
-                    ((exit_price - entry) * s * point_value * params.quantity - commission)
-                    / (risk * point_value * params.quantity),
-                    4,
-                )
-                if risk > 0
-                else 0.0,
+                r=round(pnl / (risk * point_value * q), 4) if risk > 0 else 0.0,
                 trading_day=trading_day(entry_bar.ts).isoformat(),
                 bars_held=j - i + 1,
                 session=_window_key(close_ts),
                 weekday=close_ts.astimezone(ET).strftime("%a"),
                 hour_et=close_ts.astimezone(ET).hour,
-                regime=_regime_label(ctx.closes[-24:]),
+                regime=evn.regime,
                 stop_ticks=round(abs(entry - stop) / tick, 1),
                 planned_rr=round(abs(target - entry) / abs(entry - stop), 2) if entry != stop else None,
+                symbol=params.symbol,
+                strategy_id=params.strategy_id,
+                contract=contract,
+                gross_pnl=round(pnl + commission + slippage_usd, 2),
+                slippage_usd=round(slippage_usd, 2),
+                risk_usd=round(risk * point_value * q, 2),
+                mfe_usd=round(max(mfe, 0.0) * point_value * q, 2),
+                mae_usd=round(max(mae, 0.0) * point_value * q, 2),
             )
         )
         pos = {"exit_after": rp.bars[j].ts}
     return trades
+
+
+def simulate(params: BacktestParams, bars: Sequence[Bar], stats: Counter[str] | None = None) -> list[Trade]:
+    """Run one configuration over ascending 1-minute bars and return the trades.
+
+    ``stats`` (optional) counts every completed 5-minute bar by outcome (outside the evaluation
+    window, missing history, the first strategy condition that failed) and every reason a signal
+    did not become a trade (position already open, no bar to fill on, gap, net R:R gate)."""
+    st: Counter[str] = stats if stats is not None else Counter()
+    rp, events = generate_signals(params, bars, st)
+    return execute(params, rp, events, st)
 
 
 # --- metrics ---------------------------------------------------------------------------------
