@@ -178,6 +178,10 @@ class Settings(BaseSettings):
     #: The cached calendar is STALE when the last successful download is older than this.
     news_stale_hours: float = Field(default=3.0, ge=0.5, le=48)
 
+    #: Technical setup confirmation: confluences required (4 = balanced, 5 = strict; 3/5 is research only)
+    #: and how long a confirmed setup stays valid before it is EXPIRED.
+    signal_min_confluence: int = Field(default=4, ge=4, le=5)
+    signal_expiry_minutes: int = Field(default=30, ge=5, le=240)
     #: Instruments shown in the market analyzer (only these three are displayed).
     analyzer_symbols: list[str] = Field(default_factory=lambda: ["ES", "NQ", "MNQ"])
 

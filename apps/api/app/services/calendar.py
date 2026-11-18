@@ -428,7 +428,7 @@ async def guarded_sync_forexfactory(
         st.last_success_at, st.failures, st.events, st.last_error = now, 0, out["events"], None
         st.next_attempt_at = now + timedelta(seconds=interval_s)
         result: dict[str, Any] = {"synced": True, **out}
-    except (httpx.HTTPError, ValueError) as exc:
+    except Exception as exc:  # any failure is recorded and backed off (never a 60 s retry loop)
         await session.rollback()
         st = await session.get(SourceSyncState, FF_SOURCE) or SourceSyncState(source=FF_SOURCE, failures=0, events=0)
         session.add(st)

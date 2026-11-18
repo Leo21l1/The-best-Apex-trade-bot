@@ -16,6 +16,7 @@ The 0-100 "setup quality" is a transparent checklist score, NOT a win probabilit
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
@@ -35,6 +36,7 @@ from app.research.indicators import is_rth, session_vwap
 from app.research.smc_structure import StructureConfig, analyze_structure, causal_atr, level_state
 from app.services.checklist import ChecklistConfig, reward_risk
 
+log = logging.getLogger("apex.analyzer")
 CACHE_KEY = "apex:analyzer:v1:{symbol}"
 CACHE_TTL_S = 120
 LOOKBACK_DAYS = 8
@@ -380,11 +382,17 @@ def build(
     provider: str,
     news: dict[str, Any] | None,
     evaluations: Sequence[dict[str, Any]] = (),
-    signal: dict[str, Any] | None = None,
-    evidence: dict[str, Any] | None = None,
+    signals: Sequence[dict[str, Any]] = (),
+    evidences: dict[str, dict[str, Any]] | None = None,
     cost_cfg: ChecklistConfig | None = None,
+    setup_cfg: Any = None,
 ) -> dict[str, Any]:
     """Pure function of its inputs (all bars closed at ``now``). Tested for causality."""
+    from app.services import setups as setup_engine
+
+    signals = [x for x in signals if datetime.fromisoformat(x["created_at"]) <= now] if signals else []
+    signal = signals[0] if signals else None
+    evidence = (evidences or {}).get(signal["strategy_id"]) if signal else None
     inst = INSTRUMENTS[symbol]
     tick = float(inst.tick_size)
     # Strictly bars that CLOSED at or before ``now`` (closed_only alone would only drop a trailing bar).
@@ -416,6 +424,7 @@ def build(
             "why_wait": [data["note"]],
             "timeframes": {},
             "confluence": None,
+            "signal": {"state": "WAIT", "best": None, "candidates": [], "factors": [], "reason": "DATA UNAVAILABLE"},
             "strategies": {},
             "narrative": "Data unavailable.",
             "advanced": {},
@@ -474,6 +483,7 @@ def build(
                 "side": "buy-side" if lv["side"] == "buy" else "sell-side",
                 "state": st["state"],
                 "state_at": st["verdict_at"] or st["at"],
+                "extreme": st.get("extreme"),
                 "valid": st["state"] not in ("accepted beyond",),
                 "formed": lv["formed"],
                 "distance": round(lv["price"] - price, 4),
@@ -492,6 +502,7 @@ def build(
                     "side": "buy-side" if e["side"] == "buy" else "sell-side",
                     "state": e["state"]["state"],
                     "state_at": e["state"]["verdict_at"] or e["state"]["at"],
+                    "extreme": e["state"].get("extreme"),
                     "valid": e["state"]["state"] not in ("accepted beyond", "swept and reclaimed"),
                     "formed": e["confirmed_at"],
                     "distance": round(e["price"] - price, 4),
@@ -754,6 +765,52 @@ def build(
             "note": "Hypothetical levels for analysis - not an order.",
         }
 
+    # ------------------------------------------------------------------ five-factor technical setup
+    d1_done = [b for b in d1 if b.ts.date() < trading_day(now)]
+    daily = None
+    if len(d1_done) >= 2:
+        daily = {
+            "trend": "higher" if d1_done[-1].close > d1_done[-2].close else "lower",
+            "last_close": d1_done[-1].close,
+            "prev_close": d1_done[-2].close,
+        }
+    m5c = series["5m"]
+    context = {
+        "price": price,
+        "atr5": atr5,
+        "htf": htf,
+        "htf_basis": htf_basis,
+        "mid": mid,
+        "short": short,
+        "bias_dir": bias_dir,
+        "pd15": pd15,
+        "daily": daily,
+        "vwap": vw,
+        "volatility": vol,
+        "session": sess,
+        "last_5m_open": m5c[-1].ts.isoformat() if m5c else None,
+        "m5_last": [{"t": b.ts.isoformat(), "o": b.open, "h": b.high, "l": b.low, "c": b.close} for b in m5c[-3:]],
+    }
+    advanced = {
+        k: {kk: a.get(kk) for kk in ("internal", "swing", "order_blocks", "fvgs", "equal_levels")}
+        for k, a in tfa.items()
+    }
+    pre_doc = {**base, "context": context, "advanced": advanced, "levels": levels}
+    scfg = setup_cfg or setup_engine.SetupConfig(
+        min_net_rr=get_settings().min_net_reward_risk, costs=cost_cfg or ChecklistConfig()
+    )
+    assessment = setup_engine.assess(pre_doc, list(signals), evidences or {}, scfg)
+    five = {
+        "score": setup_engine.score(assessment["factors"]),
+        "out_of": 5,
+        "direction": (assessment["best"] or {}).get("bias")
+        or ("bullish" if "BUY" in assessment["state"] else "bearish" if "SELL" in assessment["state"] else direction),
+        "factors": assessment["factors"],
+        "label": "Confluence count (a transparent checklist, not a probability)",
+        "threshold": scfg.min_confluence,
+        "direction_scores": assessment["direction_scores"],
+    }
+
     # ------------------------------------------------------------------ observations and narrative
     obs: list[str] = []
     for k, layer in (("15m", "swing"), ("5m", "internal")):
@@ -825,7 +882,10 @@ def build(
         why.append(f"Net R:R to T1 is {setup['rr_t1']['net']} (below {get_settings().min_net_reward_risk}:1).")
     if setup and not (setup["evidence"] or {}).get("evidence", "").startswith("Validated"):
         why.append("Historical evidence for this setup is not validated.")
-    if not setup and not why:
+    best = assessment.get("best")
+    if best and not best["confirmed"]:
+        why.extend(m for m in best["missing"] if m not in why)
+    if not best and not why:
         why.append("No strategy has a complete setup right now.")
 
     tf_summary = {
@@ -864,17 +924,17 @@ def build(
         "levels": sorted(levels, key=lambda lv: -lv["price"]),
         "liquidity": nearest,
         "setup": setup,
-        "why_wait": why if not (setup and setup["aligned_with_bias"] and not gates and score >= 70) else [],
+        "signal": assessment,
+        "context": context,
+        "why_wait": [] if "CONFIRMED" in assessment["state"] else why,
         "timeframes": tf_summary,
-        "confluence": confluence,
+        "confluence": five,
+        "checklist_12": confluence,
         "strategies": strategies,
         "narrative": narrative,
         "vwap": vw,
         "volatility": vol,
-        "advanced": {
-            k: {kk: a.get(kk) for kk in ("internal", "swing", "order_blocks", "fvgs", "equal_levels")}
-            for k, a in tfa.items()
-        },
+        "advanced": advanced,
     }
 
 
@@ -954,7 +1014,7 @@ async def _load_d1(session: AsyncSession, provider: str, symbol: str, now: datet
 
 async def _scan_inputs(
     session: AsyncSession, symbol: str, now: datetime
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     from app.research.scanner import SCAN_KEY
 
     evaluations: list[dict[str, Any]] = []
@@ -978,20 +1038,23 @@ async def _scan_inputs(
     for e in evaluations:
         if e["strategy_id"] in invalid and not e.get("triggered"):
             e["invalidated"] = True
-    active = next((r for r in rows if r.status == "active" and r.created_at >= now - timedelta(minutes=60)), None)
-    sig = None
-    if active:
-        sig = {
-            "strategy_id": active.strategy_id,
-            "direction": active.direction,
-            "entry": active.entry,
-            "entry_low": active.entry_low,
-            "entry_high": active.entry_high,
-            "stop": active.stop,
-            "targets": list(active.targets or []),
-            "created_at": active.created_at.isoformat(),
+    exp = get_settings().signal_expiry_minutes
+    sigs = [
+        {
+            "strategy_id": r.strategy_id,
+            "direction": r.direction,
+            "entry": r.entry,
+            "entry_low": r.entry_low,
+            "entry_high": r.entry_high,
+            "stop": r.stop,
+            "targets": list(r.targets or []),
+            "bar_ts": r.bar_ts.isoformat(),
+            "created_at": r.created_at.isoformat(),
         }
-    return evaluations, sig
+        for r in rows
+        if r.status == "active" and r.created_at >= now - timedelta(minutes=exp)
+    ]
+    return evaluations, sigs
 
 
 def _cost_cfg() -> ChecklistConfig:
@@ -1032,9 +1095,57 @@ async def snapshot(
             pass
     d1 = [] if provider == "none" else await _load_d1(session, provider, symbol, now)
     news = await news_intel.evaluate(session, now, symbol)
-    evaluations, sig = await _scan_inputs(session, symbol, now)
-    evidence = await latest_history(session, sig["strategy_id"], symbol, s.min_net_reward_risk) if sig else None
-    doc = build(symbol, m1, d1, now, feed, provider, news, evaluations, sig, evidence, _cost_cfg())
+    from app.services import setups as setup_engine
+    from app.services import signal_tracker
+
+    evaluations, sigs = await _scan_inputs(session, symbol, now)
+    evidences = {
+        sid: await latest_history(session, sid, symbol, s.min_net_reward_risk)
+        for sid in {x["strategy_id"] for x in sigs}
+    }
+    scfg = setup_engine.SetupConfig(
+        min_confluence=s.signal_min_confluence,
+        min_net_rr=s.min_net_reward_risk,
+        expiry_minutes=s.signal_expiry_minutes,
+        costs=_cost_cfg(),
+    )
+    doc = build(symbol, m1, d1, now, feed, provider, news, evaluations, sigs, evidences, _cost_cfg(), scfg)
+    # Record new setups once (immutable), advance open ones, and show a recorded confirmation unchanged.
+    try:
+        new = await signal_tracker.record(session, doc, now, s.signal_expiry_minutes)
+        for r in new:
+            if not r.qualified:
+                continue
+            from app.services.alerts import emit_alert
+
+            side = "BUY" if r.direction == "long" else "SELL"
+            ev_txt = "VALIDATED" if r.evidence == "VALIDATED" else "RESEARCH / UNVALIDATED"
+            await emit_alert(
+                session,
+                get_redis(),
+                kind="opportunity_detected",
+                severity="info",
+                title=f"{symbol}: TECHNICAL {side} SETUP CONFIRMED ({r.score}/5, {ev_txt})",
+                body=f"{r.strategy_id} at {r.original['confirmed_at_et']}: entry {r.entry} "
+                f"({r.entry_low}-{r.entry_high}), stop {r.stop}, TP1 {r.tp1}"
+                + (f", TP2 {r.tp2}" if r.tp2 else "")
+                + f", net R:R {r.net_rr_tp1}. Expires {r.expires_at.astimezone(ET):%H:%M} ET."
+                + " Analysis only - not an order.",
+                dedupe_key=f"setup:{r.key}",
+                cooldown_s=3600,
+                symbol=symbol,
+                data={"setup_id": r.id},
+            )
+        if provider != "none":
+            await signal_tracker.update(session, symbol, provider, now)
+        await signal_tracker.invalidate_on_structure(session, doc, now)
+        doc["signal"]["recorded"] = await signal_tracker.display(session, symbol, now)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        log.exception("signal tracking failed")
+        doc["signal"]["recorded"] = None
+    doc["signal"]["display_state"] = (doc["signal"]["recorded"] or {}).get("display_state") or doc["signal"]["state"]
     doc["_stamp"] = stamp
     try:
         await get_redis().set(key, json.dumps(doc, default=str), ex=CACHE_TTL_S)
@@ -1056,6 +1167,13 @@ def card(doc: dict[str, Any]) -> dict[str, Any]:
         "headline_structure": doc.get("headline_structure"),
         "liquidity": doc.get("liquidity") or {},
         "setup": {"strategy": setup["strategy"], "direction": setup["direction"]} if setup else None,
-        "quality": conf.get("score"),
+        "state": (doc.get("signal") or {}).get("display_state") or (doc.get("signal") or {}).get("state", "WAIT"),
+        "confluence": {"score": conf.get("score"), "out_of": 5, "direction": conf.get("direction")} if conf else None,
+        "last_confirmation": _last_conf(doc),
         "news": {"status": (doc.get("news") or {}).get("status"), "summary": (doc.get("news") or {}).get("summary")},
     }
+
+
+def _last_conf(doc: dict[str, Any]) -> str | None:
+    rec = (doc.get("signal") or {}).get("recorded")
+    return rec.get("confirmed_at_et") if rec else None

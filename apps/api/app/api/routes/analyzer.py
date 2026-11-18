@@ -43,3 +43,25 @@ async def detail(symbol: str, _: CurrentUser, session: SessionDep) -> dict[str, 
 @router.get("/news/intel")
 async def news(_: CurrentUser, session: SessionDep, symbol: str = "ES") -> dict[str, Any]:
     return await news_intel.evaluate(session, datetime.now(UTC), _symbol(symbol))
+
+
+@router.get("/signals")
+async def signals(_: CurrentUser, session: SessionDep, symbol: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """Recorded technical setups (forward-test history; analysis only, never orders)."""
+    from sqlalchemy import select
+
+    from app.models.signal import SetupSignal
+    from app.services.signal_tracker import public
+
+    q = select(SetupSignal).order_by(SetupSignal.confirmed_at.desc()).limit(max(1, min(limit, 500)))
+    if symbol:
+        q = q.where(SetupSignal.symbol == _symbol(symbol))
+    rows = (await session.scalars(q)).all()
+    return {"signals": [public(r) for r in rows]}
+
+
+@router.get("/signals/stats")
+async def signal_stats(_: CurrentUser, session: SessionDep, days: int = 365) -> dict[str, Any]:
+    from app.services.signal_tracker import forward_stats
+
+    return await forward_stats(session, max(1, min(days, 3650)))

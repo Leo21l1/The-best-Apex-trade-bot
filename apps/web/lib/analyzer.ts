@@ -19,9 +19,30 @@ export interface Card {
   symbol: string; name: string; data: DataStatus; session: { name: string; market_open: boolean }; bias: Bias;
   headline_structure: string | null; liquidity: { above: Level | null; below: Level | null };
   setup: { strategy: string; direction: string } | null; quality: number | null; news: NewsBrief;
+  state: string; confluence: { score: number; out_of: number; direction: string | null } | null;
+  last_confirmation: string | null;
 }
 export interface Overview { as_of: string; cards: Card[]; note: string; disclaimer: string }
-export interface Factor { n: number; name: string; family: string; direction: string | null; support: string; detail: string }
+export interface Factor { n: number; name: string; status: "PASS" | "FAIL" | "UNKNOWN"; detail: string; event?: string | null }
+export interface Rr { gross: number | null; net: number | null }
+export interface Candidate {
+  strategy_id: string; direction: "long" | "short"; score: number; factors: Factor[]; mandatory: string[];
+  requirements: { key: string; ok: boolean; detail: string }[]; missing: string[]; confirmed: boolean; evidence: string;
+  trigger_at: string | null;
+  levels: { entry: number; entry_zone: [number, number]; stop: number | null; stop_basis: string | null; tp1: number | null;
+    tp1_basis: string | null; tp2: number | null; tp2_basis: string | null; rr_tp1: Rr | null; rr_tp2: Rr | null };
+}
+export interface Recorded {
+  id: number; strategy_id: string; direction: "long" | "short"; score: number; evidence: string; contract: string | null;
+  confirmed_at: string; confirmed_at_et: string; expires_at: string; expires_at_et: string; entry: number;
+  entry_zone: [number, number]; stop: number; tp1: number; tp2: number | null; net_rr_tp1: number | null; rr_tp2: Rr | null;
+  stop_basis: string | null; tp1_basis: string | null; tp2_basis: string | null; factors: Factor[]; status: string;
+  status_reason: string | null; filled_at: string | null; display_state: string; entered: boolean; engine_version: string;
+}
+export interface SignalState {
+  state: string; display_state?: string; best: Candidate | null; candidates: Candidate[]; factors: Factor[];
+  direction_scores?: Record<string, number>; recorded?: Recorded | null; note?: string; reason?: string;
+}
 export interface StrategyRow { id: string; name: string; status: string; detail: string; side?: string | null; missing?: string[] }
 export interface Setup {
   strategy: string; strategy_id: string; direction: string; detected_at: string; satisfied: string[]; missing: string[];
@@ -43,7 +64,8 @@ export interface Analysis {
   session: { name: string; market_open: boolean }; news: { status: string; summary: string; next_high_impact: { title: string; time_et: string; minutes_until: number } | null } | null;
   bias: Bias; headline_structure: string | null; observations: string[]; levels: Level[];
   liquidity: { above: Level | null; below: Level | null }; setup: Setup | null; why_wait: string[];
-  timeframes: Record<string, TfSummary>; confluence: { score: number; label: string; direction: string | null; factors: Factor[]; gates: string[]; method: string } | null;
+  timeframes: Record<string, TfSummary>; confluence: { score: number; out_of: number; label: string; direction: string | null; factors: Factor[]; threshold: number } | null;
+  signal: SignalState;
   strategies: Record<string, StrategyRow[]>; narrative: string; disclaimer: string;
   advanced: Record<string, { internal?: { events: StructureEvent[] }; swing?: { events: StructureEvent[] }; order_blocks?: Zone[]; fvgs?: Zone[] }>;
 }
@@ -141,4 +163,26 @@ export function countdown(minutes: number): string {
   const abs = Math.abs(m), h = Math.floor(abs / 60), r = abs % 60;
   const s = h ? `${h}h ${r}m` : `${r}m`;
   return m > 0 ? `in ${s}` : `${s} ago`;
+}
+
+export const STRATEGY_NAME: Record<string, string> = {
+  mtf_trend: "Multi-Timeframe Trend", vwap_trend: "VWAP Trend", momentum_pullback: "Momentum Pullback",
+  orb: "Opening Range Breakout", breakout_retest: "Breakout Retest", vol_expansion: "Volatility Expansion",
+  sweep_reversal: "Liquidity Sweep Reversal", mean_reversion: "Mean Reversion", smc_sweep_mss: "Sweep + Market Structure Shift",
+  smc_ob_retest: "Order Block Retest", smc_fvg_retest: "Fair Value Gap Retest",
+};
+
+/** Short card headline: BUY SETUP / SELL SETUP / DEVELOPING ... / WAIT (and ended states). */
+export function headline(state: string): { text: string; tone: string } {
+  if (state.includes("BUY SETUP CONFIRMED")) return { text: "BUY SETUP", tone: "text-up border-up/50 bg-up/10" };
+  if (state.includes("SELL SETUP CONFIRMED")) return { text: "SELL SETUP", tone: "text-down border-down/50 bg-down/10" };
+  if (state === "DEVELOPING BUY") return { text: "DEVELOPING BUY", tone: "text-up/80 border-up/30" };
+  if (state === "DEVELOPING SELL") return { text: "DEVELOPING SELL", tone: "text-down/80 border-down/30" };
+  if (["INVALIDATED", "EXPIRED", "MISSED"].includes(state)) return { text: state, tone: "text-warn border-warn/40" };
+  return { text: "WAIT", tone: "text-muted border-line bg-panel-2" };
+}
+
+export function evidenceText(label: string | undefined): { text: string; warn: boolean } {
+  if (label === "VALIDATED") return { text: "VALIDATED", warn: false };
+  return { text: `${label ?? "INSUFFICIENT EVIDENCE"} · RESEARCH / UNVALIDATED`, warn: true };
 }

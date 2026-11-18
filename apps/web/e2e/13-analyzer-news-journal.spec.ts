@@ -17,18 +17,25 @@ test("market analyzer: three cards, MNQ honestly unavailable, focused analysis s
   await expect(page.getByTestId("card-MNQ").getByTestId("data-label")).toHaveText("UNAVAILABLE");
   await expect(page.getByTestId("card-MNQ").getByTestId("price")).toHaveText("—");
   await expect(page.getByTestId("card-MNQ").getByTestId("bias")).toHaveText("WAIT / INSUFFICIENT DATA");
+  await expect(page.getByTestId("card-MNQ").getByTestId("card-state")).toHaveText("WAIT");
+  await expect(page.getByTestId("card-ES").getByTestId("card-state")).toHaveText(/^(BUY SETUP|SELL SETUP|DEVELOPING BUY|DEVELOPING SELL|WAIT|INVALIDATED|EXPIRED|MISSED)$/);
+  await expect(page.getByTestId("card-ES").getByTestId("card-confluence")).toHaveText(/^[0-5]\/5$/);
 
   await page.getByTestId("card-NQ").click();
   const detail = page.getByTestId("analysis-detail");
-  await expect(detail.getByText("A. Market bias")).toBeVisible({ timeout: 30_000 });
+  // Conclusion first: technical state, confluence count, the five confirmations.
+  await expect(page.getByTestId("signal-state")).toHaveText(/^(TECHNICAL (BUY|SELL) SETUP CONFIRMED|DEVELOPING (BUY|SELL)|WAIT|INVALIDATED|EXPIRED|MISSED)$/, { timeout: 30_000 });
+  await expect(page.getByTestId("signal-confluence")).toHaveText(/^Confluence [0-5]\/5$/);
+  await expect(detail.getByText("A. Market bias")).toBeVisible();
   await expect(page.getByTestId("bias-sentence")).toContainText(/bias|structure/i);
   await expect(detail.getByText("B. What's happening now")).toBeVisible();
   await expect(detail.getByText("C. Important price levels")).toBeVisible();
-  await expect(detail.getByText(/^(D\. Potential setup|E\. Why wait\?)$/)).toBeVisible();
+  await expect(detail.getByText(/^(E\. Why wait\?|E\. Notes)$/)).toBeVisible();
   await expect(page.getByTestId("overlay-toggles").getByRole("checkbox")).toHaveCount(5);
   await page.getByTestId("advanced").locator("summary").click();
   await expect(page.getByText("Smart Money setups")).toBeVisible();
-  await expect(page.getByText(/not a win probability/)).toBeVisible();
+  await expect(page.getByText(/not a probability/).first()).toBeVisible();
+  await expect(page.getByTestId("forward-stats")).toContainText("4/5 balanced (live threshold)");
   // Analysis only: no order buttons anywhere on the analyzer.
   await expect(page.getByRole("button", { name: /^(buy|sell|place order|submit order)/i })).toHaveCount(0);
 });

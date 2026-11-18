@@ -160,8 +160,16 @@ async def test_analyzer_snapshot_is_complete_and_mnq_unavailable_is_not_derived_
     assert es["data"]["label"] == "SIMULATED" and es["data"]["price"] is not None
     assert es["bias"]["direction"] in ("BULLISH", "BEARISH", "NEUTRAL", "WAIT")
     assert set(es["timeframes"]) == {"1m", "5m", "15m", "1h"}
-    assert len(es["confluence"]["factors"]) == 12 and 0 <= es["confluence"]["score"] <= 100
-    assert "not a win probability" in es["confluence"]["label"]
+    assert len(es["confluence"]["factors"]) == 5 and 0 <= es["confluence"]["score"] <= 5
+    assert "not a probability" in es["confluence"]["label"]
+    assert all(f["status"] in ("PASS", "FAIL", "UNKNOWN") for f in es["confluence"]["factors"])
+    assert es["signal"]["display_state"] in (
+        "WAIT",
+        "DEVELOPING BUY",
+        "DEVELOPING SELL",
+        "TECHNICAL BUY SETUP CONFIRMED",
+        "TECHNICAL SELL SETUP CONFIRMED",
+    )
     assert set(es["strategies"]) == set(analyzer.FAMILIES)
     assert sum(len(v) for v in es["strategies"].values()) == 11
     assert es["narrative"] and len(es["observations"]) <= 5

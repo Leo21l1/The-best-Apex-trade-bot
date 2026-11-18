@@ -463,6 +463,12 @@ def equal_levels(bars: Sequence[Bar], tick: float, cfg: StructureConfig) -> list
 # ---------------------------------------------------------------------------------- liquidity state
 
 
+def _extreme(bars: Sequence[Bar], j: int, k: int, buy: bool) -> float:
+    """Furthest price traded beyond the level between bars j..k (the sweep extreme)."""
+    seg = bars[j : k + 1]
+    return max(b.high for b in seg) if buy else min(b.low for b in seg)
+
+
 def level_state(
     bars: Sequence[Bar],
     level: float,
@@ -496,14 +502,21 @@ def level_state(
                             "state": "accepted beyond",
                             "at": b.ts.isoformat(),
                             "verdict_at": bars[k].ts.isoformat(),
+                            "extreme": _extreme(bars, j, k, buy),
                         }
                 else:
                     return {
                         "state": "swept and reclaimed",
                         "at": b.ts.isoformat(),
                         "verdict_at": bars[k].ts.isoformat(),
+                        "extreme": _extreme(bars, j, k, buy),
                     }
-            return {"state": "breached", "at": b.ts.isoformat(), "verdict_at": None}
+            return {
+                "state": "breached",
+                "at": b.ts.isoformat(),
+                "verdict_at": None,
+                "extreme": _extreme(bars, j, n - 1, buy),
+            }
     dist = abs(bars[-1].close - level) if bars else 0.0
     return {
         "state": "approaching" if dist <= cfg.approach_atr * atr_now else "untouched",

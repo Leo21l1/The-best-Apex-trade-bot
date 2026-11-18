@@ -15,7 +15,7 @@ from app.models.research import (
     ResearchStudy,
     TradePlan,
 )
-from app.models.signal import AlertRow, SignalRow
+from app.models.signal import AlertRow, SetupSignal, SignalRow
 from app.models.user import Role, User
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "ResearchStudy",
     "Role",
     "RuleRow",
+    "SetupSignal",
     "SignalRow",
     "SourceSyncState",
     "TradePlan",

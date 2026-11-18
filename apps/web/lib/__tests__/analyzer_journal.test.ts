@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ageText, analyzerShapes, countdown, DEFAULT_OVERLAYS, snapTime, type Analysis } from "../analyzer";
+import { ageText, analyzerShapes, countdown, DEFAULT_OVERLAYS, evidenceText, headline, snapTime, type Analysis } from "../analyzer";
 import { etLocalToIso, previewPnl } from "../journal_calc";
 
 describe("analyzer helpers", () => {
@@ -35,6 +35,19 @@ describe("analyzer helpers", () => {
     const none = analyzerShapes(a, "5m", times, { fvg: false, ob: false, liquidity: false, structure: false, session: true });
     expect(none.zones).toHaveLength(0);
     expect(none.segments.map((s) => s.label)).toEqual(["ONL"]);
+  });
+});
+
+describe("signal labels", () => {
+  it("shows BUY / SELL / WAIT headlines and never hides an unvalidated strategy", () => {
+    expect(headline("TECHNICAL BUY SETUP CONFIRMED")).toMatchObject({ text: "BUY SETUP" });
+    expect(headline("TECHNICAL SELL SETUP CONFIRMED").tone).toContain("text-down");
+    expect(headline("DEVELOPING SELL").text).toBe("DEVELOPING SELL");
+    expect(headline("EXPIRED").text).toBe("EXPIRED");
+    expect(headline("WAIT").text).toBe("WAIT");
+    expect(evidenceText("VALIDATED")).toEqual({ text: "VALIDATED", warn: false });
+    expect(evidenceText("PROMISING BUT UNVALIDATED").text).toContain("RESEARCH / UNVALIDATED");
+    expect(evidenceText(undefined).warn).toBe(true);
   });
 });
 

@@ -82,20 +82,34 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
         mk = market_status(sym, now)
         contract = ((feed.get("contracts") or {}).get(sym) or {}).get("contract")
         if row is None:
-            out.append(_line(f"{sym} data", "FAIL", "no stored bars"))
+            fs = feed.get("symbols") or []
+            hint = (
+                ""
+                if not fs or sym in fs
+                else f" - {sym} is not in the feed's symbols; add it to APEX_MARKET_DATA_SYMBOLS"
+            )
+            out.append(
+                _line(f"{sym} data", "FAIL", f"no stored bars from '{prov}'{hint} (never derived from another symbol)")
+            )
             continue
         age = (now - (row[0] + timedelta(minutes=1))).total_seconds()
         when = row[0].astimezone(ET).strftime("%Y-%m-%d %H:%M ET")
         desc = f"last {row[1]} at {when} ({int(age)} s old, {str(row[2]).upper()})" + (
             f", contract {contract}" if contract else ""
         )
+        out.append(await _symbol_spec(session, prov, sym, contract, feed))
         if not mk["open"]:
             out.append(_line(f"{sym} data", "WARN", f"market closed ({mk['reason']}); {desc}"))
         elif age <= LIVE_MAX_AGE_S and str(row[2]).lower() == "live":
             out.append(_line(f"{sym} data", "PASS", desc))
         else:
             out.append(_line(f"{sym} data", "FAIL", f"STALE or not live while the market is open: {desc}"))
-    # News calendar
+    # News calendar: freshness comes from the last SUCCESSFUL download (source_sync_state), never from
+    # event insert times (upserts keep the original created_at, which made a fresh calendar look old).
+    from app.services import news_intel
+
+    intel = await news_intel.evaluate(session, now, "ES")
+    fr = intel["freshness"]
     ev = (
         await session.execute(
             select(func.count())
@@ -103,26 +117,32 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
             .where(EconomicEvent.ts >= now - timedelta(hours=1), EconomicEvent.ts <= now + timedelta(days=1))
         )
     ).scalar() or 0
-    ff = (
-        await session.execute(select(func.max(EconomicEvent.created_at)).where(EconomicEvent.source == "forexfactory"))
-    ).scalar()
-    total = (await session.execute(select(func.count()).select_from(EconomicEvent))).scalar() or 0
-    if not total:
+    last = (
+        datetime.fromisoformat(fr["last_success_at"]).astimezone(ET).strftime("%Y-%m-%d %H:%M ET")
+        if fr["last_success_at"]
+        else "never"
+    )
+    if fr["stale"]:
+        label = (
+            "UNAVAILABLE" if not fr["last_success_at"] and intel["status"] == news_intel.STALE and not ev else "STALE"
+        )
         out.append(
             _line(
                 "News calendar",
                 "FAIL",
-                "no economic calendar stored: news status is UNKNOWN, READY is blocked "
-                "(Calendar page > ForexFactory > Sync now)",
+                f"{label}: last successful download {last} (stale after {fr['stale_after_hours']} h); "
+                f"news risk is treated as UNKNOWN and no setup can be confirmed"
+                + (f"; last error: {fr['last_error']}" if fr["last_error"] else "")
+                + (f"; next attempt {fr['next_attempt_at']}" if fr["next_attempt_at"] else ""),
             )
         )
     else:
         out.append(
             _line(
                 "News calendar",
-                "PASS" if ff and now - ff < timedelta(days=2) else "WARN",
-                f"{ev} events in the next 24 h; last ForexFactory sync "
-                + (ff.astimezone(ET).strftime("%Y-%m-%d %H:%M ET") if ff else "never"),
+                "PASS",
+                f"last successful download {last} ({fr['age_hours']} h ago); {ev} events in the next 24 h; "
+                f"status now: {intel['status']} (scheduled calendar, not breaking news)",
             )
         )
     # Account and rules
@@ -131,8 +151,8 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
         out.append(
             _line(
                 "Account snapshot",
-                "FAIL",
-                "no snapshot: Risk Guardian status UNKNOWN, READY blocked (Apex Account Health > Save snapshot)",
+                "INFO",
+                "no snapshot stored (optional: market analysis does not need it; history is kept)",
             )
         )
     else:
@@ -140,9 +160,9 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
         out.append(
             _line(
                 "Account snapshot",
-                "FAIL" if st.stale else "PASS",
-                f"{'STALE' if st.stale else 'fresh'} snapshot from {snap}; balance {st.balance}, risk budget "
-                f"{st.risk_budget}" + (" - save a new one before trading" if st.stale else ""),
+                "INFO",
+                f"{'stale' if st.stale else 'fresh'} snapshot from {snap}; balance {st.balance} "
+                "(optional: not required for market analysis; history is kept)",
             )
         )
     rows = await load_rules(session)
@@ -181,41 +201,32 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
         )
     out.append(
         _line(
-            "Evidence gate",
-            "PASS" if s.require_validated_strategy else "WARN",
-            f"READY requires a validated strategy: {s.require_validated_strategy}; minimum net R:R to T1 "
-            f"{s.min_net_reward_risk}",
+            "Evidence labels",
+            "PASS",
+            "technical setups are shown with their historical evidence label; unvalidated strategies are marked "
+            f"RESEARCH / UNVALIDATED; minimum net R:R to TP1 {s.min_net_reward_risk}",
         )
     )
     out.append(
         _line(
             "AI copilot",
-            "PASS" if s.anthropic_api_key else "WARN",
+            "PASS" if s.anthropic_api_key else "INFO",
             "API key configured" if s.anthropic_api_key else "not configured (optional)",
         )
     )
-    from app.services.autopilot import killed
-
-    k = await killed()
     out.append(
         _line(
-            "Automation mode",
-            "PASS",
-            f"{s.automation_mode}"
-            + (
-                " (scan + alerts only, no orders)"
-                if s.automation_mode == "APEX_MANUAL"
-                else " (simulated orders on a separate paper account)"
-                if s.automation_mode == "AUTONOMOUS_PAPER"
-                else " (real-money gate: refused unless every requirement passes)"
-            )
-            + (f"; KILL SWITCH ON since {k.get('at')}" if k else ""),
+            "Analysis-only mode",
+            "PASS" if s.automation_mode == "APEX_MANUAL" else "FAIL",
+            "APEX_MANUAL: analysis, news and journal only; no orders, no autopilot"
+            if s.automation_mode == "APEX_MANUAL"
+            else f"{s.automation_mode} is set: this build is analysis only - set APEX_AUTOMATION_MODE=APEX_MANUAL",
         )
     )
     out.append(
         _line(
             "Phone notifications",
-            "PASS" if s.notify_provider != "none" else "WARN",
+            "PASS" if s.notify_provider != "none" else "INFO",
             s.notify_provider if s.notify_provider != "none" else "not configured (APEX_NOTIFY_PROVIDER)",
         )
     )
@@ -228,3 +239,46 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
     )
     ok = not any(x["result"] == "FAIL" for x in out)
     return {"checks": out, "ok": ok, "at": now.isoformat(), "ny_time": now.astimezone(ET).strftime("%Y-%m-%d %H:%M %Z")}
+
+
+EXPECTED_SPEC = {
+    "ES": (0.25, 12.50, 50.0),
+    "NQ": (0.25, 5.00, 20.0),
+    "MNQ": (0.25, 0.50, 2.0),
+    "MES": (0.25, 1.25, 5.0),
+}
+
+
+async def _symbol_spec(
+    session: AsyncSession, prov: str, sym: str, contract: str | None, feed: dict[str, Any]
+) -> dict[str, str]:
+    """Contract specification, actual front-month contract, and a check that prices are not copied from a sibling."""
+    from app.marketdata.instruments import INSTRUMENTS
+
+    inst = INSTRUMENTS.get(sym)
+    if inst is None:
+        return _line(f"{sym} contract", "FAIL", "unknown instrument")
+    tick, tv, pv = float(inst.tick_size), float(inst.tick_value), float(inst.point_value)
+    exp = EXPECTED_SPEC.get(sym)
+    problems = []
+    if exp and (tick, tv, pv) != exp:
+        problems.append(f"spec {tick}/{tv}/{pv} differs from expected {exp}")
+    if contract and not (contract.startswith(sym) and len(contract) <= len(sym) + 3):
+        problems.append(f"feed contract {contract} does not belong to {sym}")
+    if inst.sibling:
+        same = (
+            await session.execute(
+                text(
+                    "SELECT count(*), count(*) FILTER (WHERE a.close = b.close AND a.high = b.high AND a.low = b.low) "
+                    "FROM (SELECT ts, close, high, low FROM candles WHERE provider=:p AND symbol=:s "
+                    "ORDER BY ts DESC LIMIT 120) a JOIN candles b ON b.provider=:p AND b.symbol=:o AND b.ts=a.ts"
+                ),
+                {"p": prov, "s": sym, "o": inst.sibling},
+            )
+        ).first()
+        if same and same[0] >= 30 and same[1] == same[0]:
+            problems.append(f"last {same[0]} bars are identical to {inst.sibling}: prices look derived, not real")
+    desc = f"tick {tick} = ${tv:.2f}, point ${pv:g}; contract {contract or 'not reported by the feed'}"
+    if problems:
+        return _line(f"{sym} contract", "FAIL", "; ".join(problems) + f" ({desc})")
+    return _line(f"{sym} contract", "PASS" if contract or prov != "databento" else "WARN", desc)

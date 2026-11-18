@@ -8,8 +8,8 @@ import { CandleChart } from "@/features/charts/CandleChart";
 import { useCandles } from "@/features/charts/useCandles";
 import { usePolling } from "@/hooks/usePolling";
 import {
-  ageText, analyzerShapes, BIAS_TONE, DEFAULT_OVERLAYS, fmtPrice, NEWS_TONE,
-  type Analysis, type Card, type Level, type OverlayOptions, type Overview,
+  ageText, analyzerShapes, BIAS_TONE, DEFAULT_OVERLAYS, evidenceText, fmtPrice, headline, NEWS_TONE, STRATEGY_NAME,
+  type Analysis, type Card, type Factor, type Level, type OverlayOptions, type Overview,
 } from "@/lib/analyzer";
 import { formatEt } from "@/lib/format";
 
@@ -36,7 +36,7 @@ function InstrumentCard({ c, active, onOpen }: { c: Card; active: boolean; onOpe
           <p className="text-lg font-semibold tracking-tight">{c.symbol}</p>
           <p className="text-[11px] text-faint">{c.name}</p>
         </div>
-        <span className={cx("rounded border px-2 py-1 text-xs font-semibold tracking-wider", BIAS_TONE[c.bias.direction])} data-testid="bias">{c.bias.label}</span>
+        <span className={cx("rounded border px-2 py-1 text-sm font-bold tracking-wider", headline(c.state).tone)} data-testid="card-state">{headline(c.state).text}</span>
       </div>
       <div className="mt-3 flex items-baseline gap-2">
         <span className="font-mono text-2xl" data-testid="price">{c.data.price == null ? "—" : fmtPrice(c.data.price)}</span>
@@ -48,12 +48,13 @@ function InstrumentCard({ c, active, onOpen }: { c: Card; active: boolean; onOpe
         {c.data.contract ? ` · ${c.data.contract}` : ""}
       </p>
       <dl className="mt-3 space-y-1 text-xs">
+        <div className="flex justify-between gap-2"><dt className="text-faint">Direction</dt><dd><span className={cx("rounded border px-1.5 text-[11px] font-semibold", BIAS_TONE[c.bias.direction])} data-testid="bias">{c.bias.label}</span></dd></div>
+        <div className="flex justify-between gap-2"><dt className="text-faint">Confluence</dt><dd className="font-mono" data-testid="card-confluence">{c.confluence?.score == null ? "—" : `${c.confluence.score}/5`}</dd></div>
+        <div className="flex justify-between gap-2"><dt className="text-faint">Last confirmation</dt><dd className="font-mono">{c.last_confirmation ?? "—"}</dd></div>
         <div className="flex justify-between gap-2"><dt className="text-faint">Session</dt><dd>{c.session.name}</dd></div>
         <div className="flex justify-between gap-2"><dt className="text-faint">Structure</dt><dd className="truncate">{c.headline_structure ?? "—"}</dd></div>
         <div className="flex justify-between gap-2"><dt className="text-faint">Liquidity above</dt><dd><LevelLine lv={c.liquidity.above} tick={0.25} /></dd></div>
         <div className="flex justify-between gap-2"><dt className="text-faint">Liquidity below</dt><dd><LevelLine lv={c.liquidity.below} tick={0.25} /></dd></div>
-        <div className="flex justify-between gap-2"><dt className="text-faint">Setup</dt><dd>{c.setup ? `${c.setup.strategy} (${c.setup.direction})` : "None"}</dd></div>
-        <div className="flex justify-between gap-2"><dt className="text-faint">Setup quality</dt><dd className="font-mono">{c.quality == null ? "—" : `${c.quality}/100`}</dd></div>
       </dl>
       <p className={cx("mt-3 text-[11px] font-semibold", NEWS_TONE[c.news.status ?? ""] ?? "text-faint")} title={c.news.summary ?? ""}>
         {c.news.status ?? "News status unknown"}
@@ -108,6 +109,7 @@ function Detail({ symbol }: { symbol: string }) {
     .sort((x, y) => y.price - x.price);
   return (
     <div className="space-y-4" data-testid="analysis-detail">
+      <SignalPanel a={a} />
       <Section letter="A" title="Market bias">
         <div className="flex flex-wrap items-center gap-3">
           <span className={cx("rounded border px-2.5 py-1 text-sm font-semibold tracking-wider", BIAS_TONE[a.bias.direction])}>{a.bias.label}</span>
@@ -122,27 +124,10 @@ function Detail({ symbol }: { symbol: string }) {
             <ul className="list-disc space-y-1 pl-5" data-testid="observations">{a.observations.map((o) => <li key={o}>{o}</li>)}</ul>
           ) : <p className="text-faint">No notable structure events, sweeps or zone retests right now.</p>}
         </Section>
-        <Section letter={a.setup ? "D" : "E"} title={a.setup ? "Potential setup" : "Why wait?"}>
-          {a.setup ? (
-            <div className="space-y-2" data-testid="setup">
-              <p><span className="font-semibold">{a.setup.strategy}</span> · <span className={a.setup.direction === "long" ? "text-up" : "text-down"}>{a.setup.direction.toUpperCase()}</span>{!a.setup.aligned_with_bias && <span className="ml-2 text-warn">opposes the bias</span>}</p>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-xs">
-                <dt className="text-faint">Entry area</dt><dd>{fmtPrice(a.setup.entry_area[0], tick)} – {fmtPrice(a.setup.entry_area[1], tick)}</dd>
-                <dt className="text-faint">Invalidation / stop</dt><dd>{fmtPrice(a.setup.stop, tick)}</dd>
-                <dt className="text-faint">Targets</dt><dd>{a.setup.targets.map((t) => fmtPrice(t, tick)).join(" / ")}</dd>
-                <dt className="text-faint">R:R T1 gross / net</dt><dd>{a.setup.rr_t1 ? `${a.setup.rr_t1.gross ?? "—"} / ${a.setup.rr_t1.net ?? "—"}` : "—"}</dd>
-                <dt className="text-faint">R:R T2 gross / net</dt><dd>{a.setup.rr_t2 ? `${a.setup.rr_t2.gross ?? "—"} / ${a.setup.rr_t2.net ?? "—"}` : "—"}</dd>
-                <dt className="text-faint">Risk, 1 contract</dt><dd>{a.setup.risk_1c_usd == null ? "—" : `$${a.setup.risk_1c_usd}`}</dd>
-              </dl>
-              {a.setup.satisfied.length > 0 && <p className="text-xs"><span className="text-up">Met:</span> {a.setup.satisfied.join(", ")}</p>}
-              {a.setup.missing.length > 0 && <p className="text-xs"><span className="text-warn">Missing:</span> {a.setup.missing.join(", ")}</p>}
-              <p className="text-xs text-muted">Evidence: {a.setup.evidence.evidence ?? a.setup.evidence.reason ?? "none"}</p>
-              <p className="text-[11px] text-faint">{a.setup.note}</p>
-              {a.why_wait.length > 0 && <ul className="list-disc pl-5 text-xs text-warn">{a.why_wait.map((w) => <li key={w}>{w}</li>)}</ul>}
-            </div>
-          ) : (
+        <Section letter="E" title={a.why_wait.length ? "Why wait?" : "Notes"}>
+          {a.why_wait.length ? (
             <ul className="list-disc space-y-1 pl-5" data-testid="why-wait">{a.why_wait.map((w) => <li key={w}>{w}</li>)}</ul>
-          )}
+          ) : <p className="text-faint">All technical requirements are met; see the setup above.</p>}
         </Section>
       </div>
       <Section letter="C" title="Important price levels">
@@ -170,14 +155,16 @@ function Detail({ symbol }: { symbol: string }) {
         <summary className="cursor-pointer text-sm font-semibold">Advanced analysis</summary>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div>
-            <p className="mb-2 text-xs font-semibold text-muted">Confluence ({a.confluence?.label})</p>
-            <p className="mb-2 font-mono text-lg">{a.confluence?.score ?? "—"}/100</p>
-            <ul className="space-y-1 text-xs">
-              {a.confluence?.factors.map((f) => (
-                <li key={f.n} className="flex gap-2"><span className={cx("w-16 shrink-0", f.support === "supports" ? "text-up" : f.support === "opposes" ? "text-down" : "text-faint")}>{f.support}</span><span><span className="text-muted">{f.n}. {f.name}:</span> {f.detail}</span></li>
-              ))}
+            <p className="mb-2 text-xs font-semibold text-muted">Both directions ({a.confluence?.label})</p>
+            <p className="mb-2 font-mono text-xs">BUY {a.signal.direction_scores?.bullish ?? "—"}/5 · SELL {a.signal.direction_scores?.bearish ?? "—"}/5 · threshold {a.confluence?.threshold ?? 4}/5</p>
+            <FactorList fs={a.signal.factors} testId="five-factors" />
+            <p className="mb-1 mt-3 text-xs font-semibold text-muted">Strategy signals evaluated now</p>
+            <ul className="space-y-1 text-xs" data-testid="candidates">
+              {a.signal.candidates.length ? a.signal.candidates.map((c) => (
+                <li key={`${c.strategy_id}-${c.trigger_at}`}>{STRATEGY_NAME[c.strategy_id] ?? c.strategy_id} {c.direction} — {c.score}/5{c.confirmed ? " · confirmed" : ` · missing: ${c.missing.slice(0, 2).join("; ")}`}</li>
+              )) : <li className="text-faint">No strategy has triggered in the last 30 minutes.</li>}
             </ul>
-            <p className="mt-2 text-[11px] text-faint">{a.confluence?.method}</p>
+            <ForwardStats />
           </div>
           <div>
             <p className="mb-2 text-xs font-semibold text-muted">Strategies by family</p>
@@ -208,6 +195,116 @@ function Detail({ symbol }: { symbol: string }) {
         </div>
       </details>
       <p className="text-[11px] text-faint">{a.disclaimer}</p>
+    </div>
+  );
+}
+
+const FACTOR_TONE: Record<string, string> = { PASS: "text-up", FAIL: "text-down", UNKNOWN: "text-warn" };
+
+function FactorList({ fs, testId }: { fs: Factor[]; testId?: string }) {
+  return (
+    <ul className="space-y-1 text-xs" data-testid={testId}>
+      {fs.map((f) => (
+        <li key={f.n} className="flex gap-2"><span className={cx("w-16 shrink-0 font-mono font-semibold", FACTOR_TONE[f.status])}>{f.status}</span><span><span className="text-muted">{f.n}. {f.name}:</span> {f.detail}</span></li>
+      ))}
+    </ul>
+  );
+}
+
+/** The conclusion first: technical state, levels, timing, evidence; then the five confirmations. */
+function SignalPanel({ a }: { a: Analysis }) {
+  const sig = a.signal;
+  const rec = sig.recorded ?? null;
+  const state = sig.display_state ?? sig.state;
+  const h = headline(state);
+  const best = sig.best;
+  const tick = a.tick_size;
+  const lv = rec
+    ? { entry: rec.entry, zone: rec.entry_zone, stop: rec.stop, tp1: rec.tp1, tp2: rec.tp2, rr1: rec.net_rr_tp1, rr2: rec.rr_tp2?.net ?? null,
+        stopBasis: rec.stop_basis, tp1Basis: rec.tp1_basis, tp2Basis: rec.tp2_basis }
+    : best ? { entry: best.levels.entry, zone: best.levels.entry_zone, stop: best.levels.stop, tp1: best.levels.tp1, tp2: best.levels.tp2,
+        rr1: best.levels.rr_tp1?.net ?? null, rr2: best.levels.rr_tp2?.net ?? null, stopBasis: best.levels.stop_basis,
+        tp1Basis: best.levels.tp1_basis, tp2Basis: best.levels.tp2_basis } : null;
+  const factors = rec?.factors?.length ? rec.factors : sig.factors;
+  const score = factors.filter((f) => f.status === "PASS").length;
+  const ev = evidenceText(rec?.evidence ?? best?.evidence);
+  const confirmed = state.includes("CONFIRMED");
+  const strategy = rec?.strategy_id ?? best?.strategy_id;
+  const missing = [...factors.filter((f) => f.status !== "PASS").map((f) => `${f.name}: ${f.detail}`),
+    ...(!rec && best && !best.confirmed ? best.missing.filter((m) => !m.includes("confluences")) : [])];
+  return (
+    <section className={cx("rounded-lg border bg-panel p-4", confirmed ? (state.includes("BUY") ? "border-up/60" : "border-down/60") : "border-line")} data-testid="signal-panel">
+      <div className="flex flex-wrap items-baseline gap-3">
+        <h2 className="text-lg font-bold tracking-wide"><span>{a.symbol}</span> — <span className={cx(h.tone.split(" ")[0])} data-testid="signal-state">{state}</span></h2>
+        <span className="font-mono text-sm" data-testid="signal-confluence">Confluence {score}/5</span>
+        {(rec || best) && <span className={cx("rounded border px-2 py-0.5 text-[11px] font-semibold", ev.warn ? "border-warn/50 text-warn" : "border-up/50 text-up")} data-testid="evidence">Historical evidence: {ev.text}</span>}
+        {a.data.label !== "LIVE" && <span className="rounded border border-warn/50 px-2 py-0.5 text-[11px] text-warn">DATA {a.data.label}</span>}
+      </div>
+      {rec?.status_reason && <p className="mt-1 text-xs text-warn">{rec.status_reason}</p>}
+      {sig.note && !best && <p className="mt-1 text-xs text-muted">{sig.note}</p>}
+      {lv && (
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-sm sm:grid-cols-4" data-testid="signal-levels">
+          <div><dt className="text-[11px] text-faint">ENTRY</dt><dd>{fmtPrice(lv.entry, tick)} <span className="text-[11px] text-faint">({fmtPrice(lv.zone[0], tick)}–{fmtPrice(lv.zone[1], tick)})</span></dd></div>
+          <div><dt className="text-[11px] text-faint">STOP LOSS</dt><dd className="text-down" title={lv.stopBasis ?? ""}>{fmtPrice(lv.stop, tick)}</dd></div>
+          <div><dt className="text-[11px] text-faint">TP1</dt><dd className="text-up" title={lv.tp1Basis ?? ""}>{fmtPrice(lv.tp1, tick)}</dd></div>
+          <div><dt className="text-[11px] text-faint">TP2</dt><dd className="text-up" title={lv.tp2Basis ?? ""}>{fmtPrice(lv.tp2, tick)}</dd></div>
+          <div><dt className="text-[11px] text-faint">NET R:R TP1 / TP2</dt><dd>{lv.rr1 ?? "—"} / {lv.rr2 ?? "—"}</dd></div>
+          <div><dt className="text-[11px] text-faint">CONFIRMED</dt><dd>{rec ? rec.confirmed_at_et : "—"}</dd></div>
+          <div><dt className="text-[11px] text-faint">EXPIRES</dt><dd>{rec ? rec.expires_at_et : "—"}</dd></div>
+          <div><dt className="text-[11px] text-faint">STRATEGY</dt><dd className="font-sans">{strategy ? STRATEGY_NAME[strategy] ?? strategy : "—"}</dd></div>
+        </dl>
+      )}
+      {lv && (
+        <p className="mt-1 text-[11px] text-faint">Stop: {lv.stopBasis ?? "—"} · TP1: {lv.tp1Basis ?? "—"}{lv.tp2Basis ? ` · TP2: ${lv.tp2Basis}` : ""}. Analytical levels, not orders or guaranteed fills.</p>
+      )}
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <p className="mb-1 text-xs font-semibold text-up">Confirmations</p>
+          <ul className="list-disc space-y-0.5 pl-5 text-xs" data-testid="confirmations">
+            {factors.filter((f) => f.status === "PASS").map((f) => <li key={f.n}>{f.name}: {f.detail}</li>)}
+            {!factors.some((f) => f.status === "PASS") && <li className="list-none text-faint">None yet.</li>}
+          </ul>
+        </div>
+        <div>
+          <p className="mb-1 text-xs font-semibold text-warn">Missing</p>
+          <ul className="list-disc space-y-0.5 pl-5 text-xs" data-testid="missing">
+            {missing.slice(0, 6).map((m) => <li key={m}>{m}</li>)}
+            {!missing.length && <li className="list-none text-faint">Nothing missing.</li>}
+          </ul>
+        </div>
+      </div>
+      <p className={cx("mt-3 text-xs font-semibold", NEWS_TONE[a.news?.status ?? ""] ?? "text-faint")}>News: {a.news?.status ?? "unknown"} — <span className="font-normal text-muted">{a.news?.summary}</span></p>
+      <p className="mt-2 text-[11px] text-faint">
+        A technical confirmation means the strategy&apos;s rules are met on closed candles; it is not a prediction or a probability.
+        {ev.warn && " This strategy is not statistically validated: treat it as research."}
+      </p>
+    </section>
+  );
+}
+
+interface TierStats { resolved: number; signals: number | null; win_rate: number | null; win_rate_ci95: [number, number] | null; expectancy: number | null; expectancy_ci: [number, number] | null; profit_factor: number | null; avg_r: number | null; max_drawdown: number | null; max_consecutive_losses: number | null }
+interface FwdStats { recorded: number; qualified: number; comparison: { tiers: Record<string, TierStats>; verdict: string; method: string } }
+
+function ForwardStats() {
+  const { data } = usePolling<FwdStats>("/api/signals/stats", 300_000);
+  if (!data) return null;
+  return (
+    <div className="mt-4" data-testid="forward-stats">
+      <p className="mb-1 text-xs font-semibold text-muted">Forward test: {data.recorded} recorded setups ({data.qualified} confirmed), hypothetical outcomes</p>
+      <table className="w-full text-[11px]">
+        <thead><tr className="text-left text-faint"><th>Threshold</th><th>Resolved</th><th>Win % (95% CI)</th><th>$/trade (95% CI)</th><th>PF</th><th>Avg R</th></tr></thead>
+        <tbody>
+          {Object.entries(data.comparison.tiers).map(([k, t]) => (
+            <tr key={k} className="border-t border-line/40 font-mono">
+              <td className="font-sans">{k}</td><td>{t.resolved}</td>
+              <td>{t.win_rate == null ? "—" : `${Math.round(t.win_rate * 100)}%`}{t.win_rate_ci95 ? ` (${Math.round(t.win_rate_ci95[0] * 100)}–${Math.round(t.win_rate_ci95[1] * 100)})` : ""}</td>
+              <td>{t.expectancy ?? "—"}{t.expectancy_ci ? ` (${t.expectancy_ci[0]} – ${t.expectancy_ci[1]})` : ""}</td>
+              <td>{t.profit_factor ?? "—"}</td><td>{t.avg_r ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-1 text-[11px] text-warn">{data.comparison.verdict}</p>
     </div>
   );
 }

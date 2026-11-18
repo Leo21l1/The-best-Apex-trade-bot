@@ -53,7 +53,7 @@ async def reset_db() -> int:
                 "TRUNCATE backtest_runs, research_studies, paper_accounts, journal_trades, journal_edits, trade_plans, "
                 "news_items, "
                 "copilot_exchanges, "
-                "economic_events, source_sync_state, "
+                "economic_events, source_sync_state, setup_signals, "
                 "account_snapshots, rules, alerts, signals, "
                 "candles, audit_logs, users "
                 "RESTART IDENTITY CASCADE"
@@ -286,6 +286,50 @@ async def data_audit_cmd(symbols: list[str], days: int) -> int:
                 "== independence",
                 json.dumps(compare_instruments(symbols[0], loaded[symbols[0]], symbols[i], loaded[symbols[i]])),
             )
+    return 0
+
+
+async def confluence_study_cmd(symbol: str, days: int, holdout: int, out_dir: str) -> int:
+    """Compare 3/5, 4/5 and 5/5 confluence thresholds on stored bars, excluding the final holdout (read-only)."""
+    import json
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from app.marketdata.store import query_bars
+    from app.marketdata.types import Timeframe
+    from app.models.calendar import EconomicEvent
+    from app.research import confluence_study as cs
+    from app.services import setups
+    from app.services.analyzer import _cost_cfg
+
+    s, bars, _prov, _start, _now = await _load(symbol, days)
+    if s.market_data_provider == "none":
+        print("No market-data provider configured.")
+        return 1
+    async with get_sessionmaker()() as session:
+        d1r = await query_bars(
+            session, provider=s.market_data_provider, symbol=symbol, timeframe=Timeframe.D1, limit=days + 40
+        )
+        evs = [
+            (e.ts, e.importance)
+            for e in (await session.scalars(select(EconomicEvent))).all()
+            if symbol in (e.affected or [])
+        ]
+    from app.research.bars import Bar
+
+    d1 = [Bar(b.ts, float(b.open), float(b.high), float(b.low), float(b.close), int(b.volume)) for b in d1r]
+    cfg = setups.SetupConfig(
+        min_net_rr=s.min_net_reward_risk, expiry_minutes=s.signal_expiry_minutes, costs=_cost_cfg()
+    )
+    print(f"Running on {len(bars):,} stored 1-minute bars of {symbol}; this can take several minutes...")
+    res = cs.run(symbol, bars, d1, holdout_sessions=holdout, events=evs, cfg=cfg)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    (out / f"confluence_study_{symbol}.json").write_text(json.dumps(res, indent=2, default=str))
+    md = cs.to_markdown(res)
+    (out / f"confluence_study_{symbol}.md").write_text(md)
+    print(md)
     return 0
 
 
@@ -678,7 +722,7 @@ async def preflight_cmd(symbols: list[str]) -> int:
         + (
             "no blocking failures"
             if rep["ok"]
-            else "FAILURES above: actionable READY signals are blocked until they are fixed"
+            else "FAILURES above: technical setups cannot be confirmed until they are fixed (analysis still runs)"
         )
     )
     return 0 if rep["ok"] else 1
@@ -745,7 +789,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = sub.add_parser("autopilot", help="Autopilot status, kill switch and notification test")
     ap.add_argument("action", choices=["status", "kill", "resume", "notify-test"])
     pf = sub.add_parser("preflight", help="Morning readiness report (read-only): services, live data, risk, news")
-    pf.add_argument("--symbols", default="ES,NQ")
+    pf.add_argument("--symbols", default="ES,NQ,MNQ")
     si = sub.add_parser("strategy-inventory", help="Write the strategy inventory (generated from the code)")
     si.add_argument("--out", default="docs/strategy-inventory.md")
     rs = sub.add_parser("research-study", help="Full walk-forward research study (all strategies, ES/NQ)")
@@ -772,6 +816,11 @@ def main(argv: list[str] | None = None) -> int:
     rr.add_argument("--days", type=int, default=60)
     rr.add_argument("--strategies", default="vwap_trend,orb,momentum_pullback,breakout_retest,mtf_trend")
     rr.add_argument("--out", default=None, help="Also write the full JSON result to this file")
+    cfs = sub.add_parser("confluence-study", help="Compare 3/5, 4/5, 5/5 confluence thresholds (holdout excluded)")
+    cfs.add_argument("--symbol", default="ES")
+    cfs.add_argument("--days", type=int, default=365)
+    cfs.add_argument("--holdout-sessions", type=int, default=50)
+    cfs.add_argument("--out-dir", default="research_out")
     dc = sub.add_parser("databento-check", help="Diagnose Databento historical cutoff and live entitlement")
     dc.add_argument("--live-seconds", type=int, default=90)
     args = parser.parse_args(argv)
@@ -822,6 +871,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "contract-map":
                 syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
                 return await contract_map_cmd(syms, args.days, args.out)
+            if args.cmd == "confluence-study":
+                return await confluence_study_cmd(args.symbol.upper(), args.days, args.holdout_sessions, args.out_dir)
             if args.cmd == "rr-study":
                 syms = [x.strip() for x in args.strategies.split(",") if x.strip()]
                 return await rr_study_cmd(args.symbol.upper(), args.days, syms, args.out)

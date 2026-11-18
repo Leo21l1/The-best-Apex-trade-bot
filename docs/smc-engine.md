@@ -111,3 +111,99 @@ observable** from OHLCV candles, and a detected zone is not a profitable strateg
   * by strategy, instrument and hour (ET);
   * maximum drawdown and longest win/loss streaks.
 * Records are labelled **MANUALLY ENTERED** unless imported from a broker CSV.
+
+## Technical BUY/SELL setups (five-factor confluence)
+
+Implemented in `apps/api/app/services/setups.py`; history and outcomes in `signal_tracker.py`.
+
+**Five factors per direction**, each PASS / FAIL / UNKNOWN. UNKNOWN never counts as PASS.
+
+| # | Factor | PASS when |
+|---|---|---|
+| 1 | Higher-timeframe bias | 1h/15m structure favours the direction and price is not in the adverse half of the 15m dealing range (premium for longs, discount for shorts). Daily context is shown. |
+| 2 | Market structure | A confirmed 5m (or 1m) internal BOS/CHoCH in the direction within 60 min, and 5m internal structure in that direction. Anything else is FAIL ("developing") or, if the structure is opposite, FAIL. |
+| 3 | Liquidity | Opposing liquidity was swept and reclaimed (a failed breakout), or price was accepted beyond liquidity in the direction, within 60 min. A rejection against the direction is FAIL. |
+| 4 | FVG / order block | Price is retesting a still-valid zone of the direction on 5m/15m. A zone created by the structure-break candle is the same event, and is counted once (under factor 2). |
+| 5 | Momentum / execution | Price on the right side of VWAP, the last 5m candle confirms or rejects, volatility/volume are not dead, and it is the New York morning or afternoon session. |
+
+**Mandatory factors** per strategy must PASS whatever the score:
+
+| Strategy | Mandatory factors |
+|---|---|
+| MTF / VWAP trend | 1 + 5 |
+| Momentum pullback | 1 + 2 |
+| ORB, volatility expansion | 5 |
+| Breakout retest | 2 + 5 |
+| Sweep reversal, mean reversion | 3 |
+| Sweep + MSS | 2 + 3 |
+| OB retest | 2 + 4 |
+| FVG retest | 4 |
+
+The strategy itself must also have triggered.
+
+**TECHNICAL BUY/SELL SETUP CONFIRMED** requires all 12 of:
+1. At least 4/5 confluences (`APEX_SIGNAL_MIN_CONFLUENCE`, 4 or 5).
+2. Every mandatory factor PASS.
+3. LIVE (or clearly labelled SIMULATED) fresh data.
+4. Contract and tick known.
+5. Calendar not stale.
+6. No NEWS WINDOW ACTIVE or POST-NEWS VOLATILITY.
+7. A valid entry zone that price has not already run away from.
+8. A structural stop.
+9. A realistic target.
+10. Net R:R to TP1 of at least `APEX_MIN_NET_REWARD_RISK` (1.5).
+11. No contradicting 5m structure.
+12. A trigger younger than the expiry.
+
+Otherwise the state is DEVELOPING BUY/SELL (3+ confluences or a partial strategy setup) or WAIT.
+
+**Levels:**
+* **Entry** is the strategy's entry and zone.
+* **Stop** is the nearest structural invalidation beyond the zone (sweep extreme, the retested
+  FVG/OB invalidation, a 5m pivot), at least max(4 ticks, 0.3 × ATR5m) away, minus a buffer of
+  max(2 ticks, 0.1 × ATR). Only if there is none: the strategy stop.
+* **TP1/TP2** are one tick in front of the nearest opposing liquidity (PDH/PDL, ONH/ONL, equal
+  highs/lows, weekly/monthly), opposing zones and 15m pivots. They are never pushed further away to
+  improve R:R. If the nearest one makes R:R too small, the setup does not confirm.
+* Gross and net R:R are shown for both targets (commission round trip, entry slippage and stop
+  slippage on the risk side).
+
+**Evidence is separate from the technical state.** It is labelled VALIDATED, PROMISING BUT
+UNVALIDATED, INSUFFICIENT EVIDENCE or NEGATIVE EVIDENCE, from the latest research study. Anything not
+validated is shown as RESEARCH / UNVALIDATED. A technical confirmation never overrides it.
+
+**Signal history (`setup_signals`):**
+* Each candidate with ≥ 3/5 and valid levels is stored once:
+  * qualified setups as CONFIRMED;
+  * the rest as OBSERVED, which are research tiers and never shown as signals.
+* `confirmed_at` is the close of the last 1-minute candle used, so the signal can never predate its
+  information. The record stores the contract, strategy, engine version, all factors, levels, costs,
+  news status and context.
+* The original fields are never rewritten. Only the lifecycle columns change:
+  * EXPIRED: not reached within 30 min;
+  * MISSED: price left toward the target first;
+  * INVALIDATED: an opposite 5m structure shift before entry;
+  * hypothetical outcome after entry: TP1, stop or flat at 15:55 ET.
+* Conservative fill rules: limit at the entry price; stop first when a bar touches both; TP1 needs a
+  1-tick trade-through.
+
+**Comparing 3/5, 4/5 and 5/5:**
+* *Prospectively:* `GET /api/signals/stats` (also shown in Advanced analysis).
+* *Historically on development data:*
+  `python -m app.cli confluence-study --symbol ES --days 365 --holdout-sessions 50`. This excludes the
+  previously inspected final holdout.
+* The report shows counts, win rate with Wilson CI, average win/loss, net expectancy with bootstrap
+  CI, profit factor, drawdown, longest loss streak, average R, and breakdowns by strategy, instrument,
+  session, news and month.
+* It only names a better threshold when each tier has at least 30 resolved outcomes and the 95%
+  intervals do not overlap. Otherwise it says INCONCLUSIVE.
+* The live threshold is never changed automatically.
+
+## News calendar freshness (fix)
+
+Preflight used to report the calendar's age from the events' `created_at`. Upserts never change that
+column, so a calendar that synced every hour looked stale since the first insert. Freshness now comes
+only from `source_sync_state.last_success_at`, the last successful download. A stale or missing calendar
+is reported as STALE / UNAVAILABLE (FAIL) and blocks setup confirmation. Any sync failure, including a
+database error, is recorded with exponential backoff, so a failure can never turn into a 60-second retry
+loop.
