@@ -83,6 +83,9 @@ class BacktestParams:
     #: Stress tests: extra adverse slippage on stop fills only, and entering N bars late.
     stop_slippage_extra_ticks: float = 0.0
     entry_delay_bars: int = 0
+    #: Risk Guardian consistency: skip signals whose 1-contract loss at the stop (signal levels, round-trip
+    #: commission and slippage) exceeds this - the live Risk Guardian would size them at 0 contracts.
+    max_risk_usd: float | None = None
     #: Share of trading days (from the end) held out as out-of-sample.
     oos_fraction: float = 0.3
     walk_forward_folds: int = 4
@@ -415,6 +418,18 @@ def execute(
             nrr = net_rr(params, sig.symbol, sig.direction, sig.entry, stop, target)
             if nrr is None or nrr < params.min_net_rr:
                 st[f"signal rejected: net R:R below {params.min_net_rr:g}"] += 1
+                continue
+        if params.max_risk_usd is not None:
+            loss_1c = (
+                abs(sig.entry - stop) * point_value
+                + 2 * params.commission_per_side
+                + 2 * params.slippage_ticks * tick * point_value
+            )
+            if loss_1c > params.max_risk_usd:
+                st[
+                    f"signal rejected: 1-contract loss at stop above the ${params.max_risk_usd:,.0f} risk budget "
+                    "(Risk Guardian would size 0)"
+                ] += 1
                 continue
         exit_price = exit_reason = None
         j = i

@@ -425,8 +425,86 @@ async def backfill_cmd(
     return 0
 
 
+async def contract_map_cmd(symbols: list[str], days: int, out: str) -> int:
+    """Actual contract per date from Databento symbology (metadata, not a data download), vs the calendar."""
+    import json
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+
+    from app.adapters.marketdata.base import ProviderError
+    from app.core.config import get_settings
+    from app.marketdata.factory import build_provider
+    from app.research.rollover import compare_to_calendar
+
+    s = get_settings()
+    if s.market_data_provider != "databento":
+        print("contract-map needs the Databento provider.")
+        return 1
+    p = build_provider(s)
+    end = datetime.now(UTC).date()
+    maps: dict[str, dict[str, str]] = {}
+    try:
+        for sym in symbols:
+            print(f"{sym}: resolving {p.continuous(sym)} {end - timedelta(days=days)} -> {end} ...", flush=True)
+            maps[sym] = await p.resolve_contracts(sym, end - timedelta(days=days), end)
+            for c in compare_to_calendar(sym, maps[sym]):
+                print(
+                    f"   switch {c['switch']} {c['from']} -> {c['to']}: calendar roll {c['calendar_roll']} "
+                    f"({c['days_from_calendar']:+d} days), inside exclusion window: {c['inside_calendar_window']}, "
+                    f"inferred contract matches: {c['inferred_contract_matches']}"
+                )
+    except ProviderError as exc:
+        print(f"FAILED: {exc}")
+        return 3
+    finally:
+        await p.aclose()
+    Path(out).write_text(json.dumps(maps, indent=1))  # noqa: ASYNC240
+    print(f"Wrote {out}. Use it with: research-study --contract-map {out}")
+    return 0
+
+
+async def research_audit_cmd(symbols: list[str], study_id: int | None, out_dir: str) -> int:
+    """Independent audit of the latest stored study per instrument (read-only)."""
+    import json
+    from pathlib import Path
+
+    from app.models.research import ResearchStudy
+    from app.research.audit import audit_md, audit_study
+    from app.services.research_study import latest
+
+    Path(out_dir).mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    for sym in symbols:
+        async with get_sessionmaker()() as session:
+            st = await session.get(ResearchStudy, study_id) if study_id else await latest(session, sym)
+        if st is None:
+            print(f"{sym}: no stored study.")
+            continue
+        a = audit_study(st.result, st.trades or [])
+        Path(out_dir, f"audit_{st.symbol}.json").write_text(json.dumps(a, indent=1, default=str))  # noqa: ASYNC240
+        Path(out_dir, f"audit_{st.symbol}.md").write_text(audit_md(a))  # noqa: ASYNC240
+        d = a["decision"]
+        print(
+            f"== {st.symbol} study #{st.id}: headlines consistent {a['headlines']['consistent']}; "
+            f"validated {d['validated'] or 'none'}; paper trading {d['forward_paper_trading'] or 'none'}; "
+            f"watch list {d['watch_list_research_only'] or 'none'}; negative {len(d['negative_evidence'])}"
+        )
+        print(f"   {a['risk_budget_note']}")
+        for c in a["candidates"]:
+            print(
+                f"   {c['row']}: WF {c['walk_forward']['trades']} tr ${c['walk_forward']['expectancy']}/tr, "
+                f"holdout {c['holdout']['trades']} tr ${c['holdout']['expectancy']}/tr; flags: {len(c['flags'])}"
+            )
+        print(f"   files: {out_dir}/audit_{st.symbol}.md, .json")
+    return 0
+
+
 async def research_study_cmd(
-    symbols: list[str], days: int, strategies: list[str] | None, workers: int, out_dir: str
+    symbols: list[str],
+    days: int,
+    strategies: list[str] | None,
+    workers: int,
+    out_dir: str,
+    contract_map_path: str | None = None,
 ) -> int:
     """Full research study per instrument: stores it for the dashboard and writes CSV/JSON/Markdown."""
     from app.services.history import get_job
@@ -443,9 +521,21 @@ async def research_study_cmd(
             f"NOTE: backfill {job['id']} is still {job['status']}; results will be PRELIMINARY for the data "
             "stored so far. Re-run when it has finished."
         )
+    maps: dict[str, dict[str, str]] = {}
+    if contract_map_path:
+        import json
+        from pathlib import Path
+
+        maps = json.loads(Path(contract_map_path).read_text())  # noqa: ASYNC240
     for sym in symbols:
         sid, res = await run_and_store(
-            get_sessionmaker(), sym, days, strategies, workers, progress=lambda m: print(m, flush=True)
+            get_sessionmaker(),
+            sym,
+            days,
+            strategies,
+            workers,
+            progress=lambda m: print(m, flush=True),
+            contract_map=maps.get(sym),
         )
         files = write_artifacts(res, out_dir)
         h = headline(res)
@@ -502,6 +592,15 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("--strategies", default="", help="Comma-separated ids; empty = every eligible strategy")
     rs.add_argument("--workers", type=int, default=2, help="Parallel processes (one strategy each)")
     rs.add_argument("--out-dir", default="research_out")
+    rs.add_argument("--contract-map", default=None, help="JSON from contract-map: use actual roll dates")
+    ra = sub.add_parser("research-audit", help="Independent audit of the latest stored study (read-only)")
+    ra.add_argument("--symbols", default="ES,NQ")
+    ra.add_argument("--study-id", type=int, default=None)
+    ra.add_argument("--out-dir", default="research_out")
+    cm = sub.add_parser("contract-map", help="Actual contracts per date from Databento symbology (metadata)")
+    cm.add_argument("--symbols", default="ES,NQ")
+    cm.add_argument("--days", type=int, default=400)
+    cm.add_argument("--out", default="contract_map.json")
     rr = sub.add_parser("rr-study", help="Compare reward:risk configurations out of sample on stored bars")
     rr.add_argument("--symbol", default="ES")
     rr.add_argument("--days", type=int, default=60)
@@ -541,7 +640,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "research-study":
                 strats = [x.strip() for x in args.strategies.split(",") if x.strip()] or None
                 syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
-                return await research_study_cmd(syms, args.days, strats, max(1, min(args.workers, 8)), args.out_dir)
+                return await research_study_cmd(
+                    syms, args.days, strats, max(1, min(args.workers, 8)), args.out_dir, args.contract_map
+                )
+            if args.cmd == "research-audit":
+                syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+                return await research_audit_cmd(syms, args.study_id, args.out_dir)
+            if args.cmd == "contract-map":
+                syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
+                return await contract_map_cmd(syms, args.days, args.out)
             if args.cmd == "rr-study":
                 syms = [x.strip() for x in args.strategies.split(",") if x.strip()]
                 return await rr_study_cmd(args.symbol.upper(), args.days, syms, args.out)

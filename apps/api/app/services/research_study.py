@@ -106,6 +106,7 @@ async def run_and_store(
     strategies: Sequence[str] | None,
     workers: int,
     progress: Callable[[str], None] | None = None,
+    contract_map: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     s = get_settings()
     now = datetime.now(UTC)
@@ -113,8 +114,23 @@ async def run_and_store(
     async with sm() as session:
         bars = await load_bars(session, s.market_data_provider, symbol, start, now)
         prov = await _provenance(session, s.market_data_provider, symbol, start, now)
-        rules = to_ruleset(await load_rules(session))
+        rule_rows = await load_rules(session)
+        rules = to_ruleset(rule_rows)
         await session.commit()
+    rules_provenance = [
+        {
+            "key": r.key,
+            "label": r.label,
+            "value": r.value,
+            "required": r.required,
+            "verified": r.verified,
+            "source_url": r.source_url,
+            "verified_at": r.verified_at.isoformat() if r.verified_at else None,
+            "applies_to": r.applies_to,
+            "version": r.version,
+        }
+        for r in rule_rows
+    ]
     inst = INSTRUMENTS[symbol]
     commission = s.cost_commission_per_side_micro if inst.is_micro else s.cost_commission_per_side_standard
     quality = "simulated" if s.market_data_provider == "simulated" else "historical"
@@ -130,6 +146,8 @@ async def run_and_store(
         progress=progress,
         requested=(start, now),
         provenance=prov,
+        rules_provenance=rules_provenance,
+        contract_map=contract_map,
     )
     trades = res.pop("trade_log")
     params = {
@@ -139,6 +157,7 @@ async def run_and_store(
         "commission_per_side": commission,
         "slippage_ticks": s.cost_slippage_ticks_per_side,
         "min_net_reward_risk": s.min_net_reward_risk,
+        "contract_map": bool(contract_map),
     }
     async with sm() as session:
         row = ResearchStudy(

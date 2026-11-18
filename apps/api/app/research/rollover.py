@@ -104,13 +104,41 @@ def excluded_dates(symbol: str, start: date, end: date) -> dict[date, str]:
     return out
 
 
-def segments(symbol: str, bars: Sequence[Bar]) -> tuple[list[tuple[str, list[Bar]]], dict[str, str]]:
+def switch_dates(contract_map: dict[str, str]) -> list[tuple[date, str, str]]:
+    """(first trade date of the new contract, old, new) from an actual date -> contract mapping."""
+    days = sorted(contract_map)
+    out = []
+    for a, b in itertools.pairwise(days):
+        if contract_map[a] != contract_map[b]:
+            out.append((date.fromisoformat(b), contract_map[a], contract_map[b]))
+    return out
+
+
+def segments(
+    symbol: str, bars: Sequence[Bar], contract_map: dict[str, str] | None = None
+) -> tuple[list[tuple[str, list[Bar]]], dict[str, str]]:
     """Split bars into per-contract segments with the roll windows removed.
 
-    Returns ([(contract, bars), ...] in time order, {excluded trade date: reason})."""
+    With ``contract_map`` (trade date -> actual contract, from Databento symbology) the windows sit
+    around the ACTUAL switch dates and segments use the actual contracts; otherwise both are inferred
+    from the roll calendar. Returns ([(contract, bars), ...] in time order, {excluded date: reason})."""
     if not bars:
         return [], {}
-    excl = excluded_dates(symbol, trading_day(bars[0].ts), trading_day(bars[-1].ts))
+    first, last = trading_day(bars[0].ts), trading_day(bars[-1].ts)
+    if contract_map:
+        excl: dict[date, str] = {}
+        for sw, old, new in switch_dates(contract_map):
+            for d in _sessions_around(symbol, sw, PRE_SESSIONS, POST_SESSIONS):
+                excl[d] = f"roll window around the actual switch on {sw.isoformat()} ({old} -> {new})"
+
+        def contract_of(d: date) -> str:
+            return contract_map.get(d.isoformat()) or front_contract(symbol, d) + " (inferred)"
+    else:
+        excl = excluded_dates(symbol, first, last)
+
+        def contract_of(d: date) -> str:
+            return front_contract(symbol, d)
+
     segs: list[tuple[str, list[Bar]]] = []
     cur: list[Bar] = []
     cur_c: str | None = None
@@ -121,7 +149,7 @@ def segments(symbol: str, bars: Sequence[Bar]) -> tuple[list[tuple[str, list[Bar
                 segs.append((cur_c or "", cur))
                 cur, cur_c = [], None
             continue
-        c = front_contract(symbol, d)
+        c = contract_of(d)
         if cur_c is not None and c != cur_c:
             segs.append((cur_c, cur))
             cur = []
@@ -130,6 +158,27 @@ def segments(symbol: str, bars: Sequence[Bar]) -> tuple[list[tuple[str, list[Bar
     if cur:
         segs.append((cur_c or "", cur))
     return segs, {d.isoformat(): why for d, why in excl.items()}
+
+
+def compare_to_calendar(symbol: str, contract_map: dict[str, str]) -> list[dict[str, Any]]:
+    """Each actual switch vs the calendar roll date (and whether the exclusion window would cover it)."""
+    out = []
+    for sw, old, new in switch_dates(contract_map):
+        rolls = roll_dates(symbol, sw - timedelta(days=40), sw + timedelta(days=40))
+        nearest = min(rolls, key=lambda r: abs((r - sw).days)) if rolls else None
+        window = _sessions_around(symbol, nearest, PRE_SESSIONS, POST_SESSIONS) if nearest else set()
+        out.append(
+            {
+                "switch": sw.isoformat(),
+                "from": old,
+                "to": new,
+                "calendar_roll": nearest.isoformat() if nearest else None,
+                "days_from_calendar": (sw - nearest).days if nearest else None,
+                "inside_calendar_window": sw in window,
+                "inferred_contract_matches": front_contract(symbol, sw) == new,
+            }
+        )
+    return out
 
 
 def detect_discontinuities(symbol: str, bars: Sequence[Bar], factor: float = 8.0) -> list[dict[str, Any]]:

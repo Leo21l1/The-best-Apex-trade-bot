@@ -97,10 +97,12 @@ def _period_of(plan: dict[str, Any]) -> dict[str, str]:
 
 def _strategy_job(args: tuple[Any, ...]) -> dict[str, Any]:
     """One strategy on one instrument: all configurations and scenarios. Runs in a worker process."""
-    symbol, sid, segs, configs, scen, commission, slippage, period_of = args
+    symbol, sid, segs, configs, scen, commission, slippage, period_of, max_risk = args
     gen_stats: Counter[str] = Counter()
     gen = []
-    base = BacktestParams(strategy_id=sid, symbol=symbol, commission_per_side=commission, slippage_ticks=slippage)
+    base = BacktestParams(
+        strategy_id=sid, symbol=symbol, commission_per_side=commission, slippage_ticks=slippage, max_risk_usd=max_risk
+    )
     for contract, bars in segs:
         rp, events = generate_signals(base, bars, gen_stats)
         gen.append((contract, rp, events))
@@ -177,13 +179,16 @@ def run_full_study(
     progress: Callable[[str], None] | None = None,
     requested: tuple[datetime, datetime] | None = None,
     provenance: dict[str, int] | None = None,
+    enforce_risk_budget: bool = True,
+    rules_provenance: list[dict[str, Any]] | None = None,
+    contract_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     say = progress or (lambda _m: None)
     standards = ValidationStandards()
     sims = quality == "simulated"
     start, end = requested or ((bars[0].ts, bars[-1].ts) if bars else (datetime.now(UTC), datetime.now(UTC)))
     audit = audit_bars(symbol, bars, start, end, provenance)
-    segs, excluded = segments(symbol, bars)
+    segs, excluded = segments(symbol, bars, contract_map)
     usable = [d for d in audit.get("usable_session_dates", []) if d not in excluded]
     plan = plan_periods(usable)
     period_of = _period_of(plan)
@@ -196,7 +201,11 @@ def run_full_study(
         f"{len(segs)} contract segment(s); {len(strategies)} strategies x {len(configs)} configs x "
         f"{len(scen)} scenarios"
     )
-    jobs = [(symbol, sid, segs, list(configs), scen, commission, slippage, period_of) for sid in strategies]
+    # Risk Guardian consistency: at full account health one contract may lose at most the smaller of the
+    # daily loss limit and the drawdown allowance; signals above that would be sized at 0 live.
+    budget = [float(x) for x in (rules.daily_loss_limit, rules.max_drawdown) if x]
+    max_risk = min(budget) if (enforce_risk_budget and budget) else None
+    jobs = [(symbol, sid, segs, list(configs), scen, commission, slippage, period_of, max_risk) for sid in strategies]
     results: list[dict[str, Any]] = []
     if workers > 1 and len(jobs) > 1:
         import multiprocessing as mp
@@ -306,6 +315,12 @@ def run_full_study(
                 "scenarios": [{"key": s.key, "label": s.label} for s in scen],
             },
             "comparisons": comparisons,
+            "risk_filter": {
+                "max_1_contract_loss_usd": max_risk,
+                "rule": "signals whose 1-contract loss at the stop (incl. round-trip costs) exceeds the smaller of the "
+                "daily loss limit and the drawdown allowance are skipped: the live Risk Guardian would size them at 0",
+            },
+            "rules_verification": rules_provenance or [],
             "standards": asdict(standards),
             "rows": rows,
             "rankings": rankings,

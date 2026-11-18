@@ -23,7 +23,7 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -174,6 +174,40 @@ class DatabentoProvider(MarketDataProvider):
             self._last_request = loop.time()
 
     async def _get(self, path: str, params: dict[str, Any]) -> httpx.Response:
+        return await self._request("GET", path, params)
+
+    async def resolve_contracts(self, symbol: str, start: date, end: date) -> dict[str, str]:
+        """Actual contract behind the continuous symbol per date (``symbology.resolve``, metadata - not
+        a data download). Intervals are [d0, d1). Returns {"YYYY-MM-DD": "ESZ6", ...}."""
+        r = await self._request(
+            "POST",
+            "/v0/symbology.resolve",
+            {
+                "dataset": DATASET,
+                "symbols": self.continuous(symbol),
+                "stype_in": "continuous",
+                "stype_out": "raw_symbol",
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+            },
+        )
+        if r.status_code >= 400:
+            case, msg = error_detail(r, self._key)
+            raise ProviderError(f"Databento symbology HTTP {r.status_code} {case}: {msg}")
+        try:
+            body = r.json()
+            intervals = (body.get("result") or {}).get(self.continuous(symbol)) or []
+        except (ValueError, AttributeError) as exc:
+            raise ProviderError("unexpected Databento symbology response") from exc
+        out: dict[str, str] = {}
+        for iv in intervals:
+            d, d1, sym = date.fromisoformat(str(iv["d0"])[:10]), date.fromisoformat(str(iv["d1"])[:10]), str(iv["s"])
+            while d < d1:
+                out[d.isoformat()] = sym
+                d += timedelta(days=1)
+        return out
+
+    async def _request(self, method: str, path: str, params: dict[str, Any]) -> httpx.Response:
         """GET with bounded retries and exponential backoff (1 + ``max_retries`` attempts at most).
 
         * Metadata endpoints (cost, dataset range, ...) are free and idempotent: timeouts, dropped
@@ -189,7 +223,11 @@ class DatabentoProvider(MarketDataProvider):
         for attempt in range(attempts):
             await self._throttle()
             try:
-                r = await self._client.get(path, params=params)
+                r = (
+                    await self._client.get(path, params=params)
+                    if method == "GET"
+                    else await self._client.post(path, data=params)
+                )
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
                 last = f"{type(exc).__name__} (request not sent)"
             except (httpx.TimeoutException, httpx.ReadError, httpx.RemoteProtocolError) as exc:

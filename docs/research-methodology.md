@@ -19,8 +19,11 @@ Nothing here places orders. Live Apex/Tradovate execution stays disabled; the Ri
   **per-contract segments**; strategies run on each segment separately, so indicators, previous-day
   levels and 15m/1h bars never mix two contracts, and no trade can span a roll (positions are also
   flat by 15:55 ET). Fills and P&L use the real, unadjusted prices of the traded contract.
-* The contract label (e.g. `ESZ6`) is **inferred** from the roll calendar; stored bars do not carry
-  the contract id. `detect_discontinuities` checks the data independently: a session-open gap larger
+* The contract label (e.g. `ESZ6`) is **inferred** from the roll calendar unless an actual map is
+  supplied: `python -m app.cli contract-map` asks Databento `symbology.resolve` (metadata, not a data
+  download) which contract `ROOT.v.0` pointed to on each date, compares every switch with the calendar,
+  and `research-study --contract-map contract_map.json` then excludes windows around the ACTUAL switch
+  dates and labels segments with the actual contracts. Stored bars do not carry the contract id. `detect_discontinuities` checks the data independently: a session-open gap larger
   than 8x the median outside a roll window is reported as an unexplained discontinuity.
 * Daylight saving and holidays come from the exchange calendar (`pandas_market_calendars`); all
   session arithmetic uses UTC instants (tested across the 2026-11-01 change).
@@ -44,6 +47,7 @@ Nothing here places orders. Live Apex/Tradovate execution stays disabled; the Ri
 | Same bar touches stop and target | counted as the stop (intrabar order unknown: conservative) |
 | Time | flat at 15:55 ET at the bar open (1 tick slippage); signals only 09:35-15:30 ET |
 | Overlap | one position at a time; signals while in a position are skipped and counted |
+| Risk Guardian | signals whose 1-contract loss at the stop (signal levels + round-trip commission + 2 slippage fills) exceeds the smaller of the daily loss limit and the drawdown allowance are skipped: live, the Risk Guardian would size them at 0 contracts (added after the first real-data audit; studies run before it include such trades) |
 | Commission | $2.50 per side per standard contract (configurable) |
 | Audit fields | gross P&L at ideal fills, commission, slippage $, net P&L, initial $ risk, R, MFE/MAE (1-minute highs/lows from the entry bar to the exit bar, inclusive: conservative) |
 
@@ -95,12 +99,24 @@ attempts; pass rate with a Wilson interval. **The rule values are labelled UNVER
 is verified in the app against an official apextraderfunding.com page** (this environment could not
 reach that site). A configured daily loss limit is not assumed to be a provider rule.
 
-## 8. Reproduce
+## 8. Independent audit of a stored study
+
+`python -m app.cli research-audit --symbols ES,NQ` (read-only) re-derives the headline rankings,
+explains why higher raw-expectancy rows were not selected, compares walk-forward with the holdout and
+the stress scenarios, checks monthly stability and how much of the net depends on the five largest
+winners, lists the largest losses and any loss beyond 1.5x planned risk (gap fills), counts trades the
+Risk Guardian would have blocked, rates the Apex pass-rate intervals as informative or not, and writes
+`audit_<SYM>.md/.json` with a decision summary (validated / forward paper trading / research-only watch
+list / negative evidence). It never upgrades a classification.
+
+## 9. Reproduce
 
 ```powershell
 docker compose exec api python -m app.cli data-audit --symbols ES,NQ --days 400
 docker compose exec api python -m app.cli strategy-inventory --out /tmp/strategy-inventory.md
-docker compose exec api python -m app.cli research-study --symbols ES,NQ --days 400 --workers 2 --out-dir /tmp/research_out
+docker compose exec api python -m app.cli contract-map --symbols ES,NQ --days 400 --out /tmp/contract_map.json
+docker compose exec api python -m app.cli research-study --symbols ES,NQ --days 400 --workers 2 --out-dir /tmp/research_out --contract-map /tmp/contract_map.json
+docker compose exec api python -m app.cli research-audit --symbols ES,NQ --out-dir /tmp/research_out
 docker compose cp api:/tmp/research_out ./research_out
 ```
 
