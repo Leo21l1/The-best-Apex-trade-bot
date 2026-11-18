@@ -332,7 +332,9 @@ async def rr_study_cmd(symbol: str, days: int, strategies: list[str], out: str |
 
 
 async def backfill_cmd(symbols: list[str], sessions: int, approve_cost: float | None, accept_unknown: bool) -> int:
-    """Estimate (default) or start an approved historical backfill. Never downloads without approval."""
+    """Estimate (default) or start an approved historical backfill. Never downloads without approval,
+    and never starts when the cost estimate failed."""
+    from app.adapters.marketdata.base import ProviderAuthError, ProviderError
     from app.core.config import get_settings
     from app.services import history
 
@@ -340,14 +342,33 @@ async def backfill_cmd(symbols: list[str], sessions: int, approve_cost: float | 
     if s.market_data_provider in ("none",):
         print("No market-data provider configured.")
         return 1
-    async with get_sessionmaker()() as session:
-        est = await history.estimate(session, symbols, sessions)
+    print(
+        f"Estimating historical cost for {', '.join(symbols)} (target {sessions} sessions; timeout "
+        f"{s.databento_timeout_seconds:g}s per request, up to {s.databento_max_retries} retries)...",
+        flush=True,
+    )
+    try:
+        async with get_sessionmaker()() as session:
+            est = await history.estimate(session, symbols, sessions, progress=lambda m: print(m, flush=True))
+    except ProviderAuthError as exc:
+        print(f"ESTIMATE FAILED: {exc}\nCheck APEX_DATABENTO_API_KEY and your Databento entitlements. Nothing started.")
+        return 3
+    except ProviderError as exc:
+        print(f"ESTIMATE FAILED: {exc}\nNothing was started. Try again later or raise APEX_DATABENTO_TIMEOUT_SECONDS.")
+        return 3
     for it in est["items"]:
+        c = it["estimated_cost_usd"]
         print(
-            f"{it['symbol']}: {it['sessions_stored']} sessions stored, {len(it['missing_sessions'])} missing "
-            f"(target {sessions}); estimated cost {it['estimated_cost_usd']}"
+            f"{it['symbol']}: {it['sessions_stored']} sessions stored, {len(it['missing_sessions'])} to download "
+            f"in {it.get('requests', 0)} range(s); estimated cost {'FAILED' if c is None else f'${c:.4f}'}"
             + (f" - {it['note']}" if it["note"] else "")
         )
+    if est.get("estimate_failed"):
+        print(
+            "ESTIMATE FAILED for at least one symbol; nothing was started and no cost is assumed.\n"
+            "Try again later, or raise APEX_DATABENTO_TIMEOUT_SECONDS in .env and restart the api container."
+        )
+        return 3
     cost = est["estimated_cost_usd"]
     print(f"TOTAL ESTIMATED COST: {'UNKNOWN' if cost is None else f'${cost:.4f}'} ({est['note']})")
     if approve_cost is None and not accept_unknown:
@@ -363,9 +384,11 @@ async def backfill_cmd(symbols: list[str], sessions: int, approve_cost: float | 
     if job and job["status"] in ("queued", "running"):
         print(f"A backfill is already running: {job['id']}")
         return 4
-    job = await history.start_job(symbols, sessions, cost, "cli")
+    plan = {it["symbol"]: it["missing_sessions"] for it in est["items"]}
+    job = await history.start_job(symbols, sessions, cost, "cli", plan=plan)
     print(
-        f"Backfill {job['id']} queued. The worker fetches a few sessions per cycle; follow it on System Health "
+        f"Backfill {job['id']} queued for exactly the {sum(len(v) for v in plan.values())} estimated sessions. "
+        "The worker downloads a few per cycle and saves progress after each one; follow it on System Health "
         "or with `python -m app.cli data-audit`."
     )
     return 0

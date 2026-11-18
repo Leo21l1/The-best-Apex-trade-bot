@@ -135,11 +135,19 @@ class DatabentoProvider(MarketDataProvider):
         live_factory: Callable[[str], Any] = _live_factory,
         roll_rule: str = "v",
         range_ttl_s: float = 60.0,
+        timeout_s: float = 60.0,
+        max_retries: int = 3,
+        backoff_base_s: float = 1.0,
     ) -> None:
         if not api_key:
             raise ProviderAuthError("APEX_DATABENTO_API_KEY is not set")
         self._key = api_key
-        self._client = client or httpx.AsyncClient(base_url=BASE_URL, auth=(api_key, ""), timeout=30.0)
+        # Connect quickly; allow the server time to compute (cost estimates and large ranges can be slow).
+        self._timeout = httpx.Timeout(timeout_s, connect=min(15.0, timeout_s))
+        self._client = client or httpx.AsyncClient(base_url=BASE_URL, auth=(api_key, ""), timeout=self._timeout)
+        self._timeout_s = timeout_s
+        self._max_retries = max(0, min(int(max_retries), 6))  # hard cap: requests never retry indefinitely
+        self._backoff = backoff_base_s
         self._min_interval = min_interval_s
         self._clock = clock
         self._sleep = sleep
@@ -166,20 +174,64 @@ class DatabentoProvider(MarketDataProvider):
             self._last_request = loop.time()
 
     async def _get(self, path: str, params: dict[str, Any]) -> httpx.Response:
-        for attempt in range(4):
+        """GET with bounded retries and exponential backoff (1 + ``max_retries`` attempts at most).
+
+        * Metadata endpoints (cost, dataset range, ...) are free and idempotent: timeouts, dropped
+          connections, HTTP 429 and 5xx are retried.
+        * ``timeseries.*`` downloads are billed. A read timeout happens after Databento received the
+          request, so retrying could be charged twice: only failures where the request was never
+          sent (connect errors, connect/pool timeouts) and HTTP 429 are retried there.
+        Errors never include the API key (it travels in the auth header, not the URL).
+        """
+        billed = path.startswith("/v0/timeseries")
+        attempts = 1 + self._max_retries
+        last = ""
+        for attempt in range(attempts):
             await self._throttle()
             try:
                 r = await self._client.get(path, params=params)
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+                last = f"{type(exc).__name__} (request not sent)"
+            except (httpx.TimeoutException, httpx.ReadError, httpx.RemoteProtocolError) as exc:
+                last = f"{type(exc).__name__} after {self._timeout_s:g}s"
+                if billed:
+                    raise ProviderError(
+                        f"Databento download {path} failed: {last}. Not retried automatically because the "
+                        "request reached Databento and may be billed; the backfill resumes later without "
+                        "re-downloading stored sessions."
+                    ) from exc
             except httpx.HTTPError as exc:
                 raise ProviderError(f"Databento request failed: {type(exc).__name__}") from exc
-            if r.status_code in (401, 403):
-                _case, msg = error_detail(r, self._key)
-                raise ProviderAuthError(f"Databento rejected the API key or entitlement (HTTP {r.status_code}): {msg}")
-            if r.status_code == 429:
-                await self._sleep(min(float(r.headers.get("retry-after", 2**attempt)), 60.0))
-                continue
-            return r
-        raise ProviderError("Databento rate limit: retries exhausted")
+            else:
+                if r.status_code in (401, 403):
+                    _case, msg = error_detail(r, self._key)
+                    raise ProviderAuthError(
+                        f"Databento rejected the API key or entitlement (HTTP {r.status_code}): {msg}"
+                    )
+                if r.status_code == 429:
+                    last = "HTTP 429 rate limited"
+                    if attempt + 1 < attempts:
+                        await self._sleep(min(float(r.headers.get("retry-after", self._backoff * 2**attempt)), 60.0))
+                    continue
+                if r.status_code >= 500 and not billed and attempt + 1 < attempts:
+                    last = f"HTTP {r.status_code}"
+                    await self._sleep(min(self._backoff * 2**attempt, 30.0))
+                    continue
+                return r
+            if attempt + 1 < attempts:
+                delay = min(self._backoff * 2**attempt, 30.0)
+                log_event(
+                    log,
+                    "databento request retry",
+                    level=logging.WARNING,
+                    path=path,
+                    attempt=attempt + 1,
+                    of=attempts,
+                    reason=last,
+                    retry_in_s=delay,
+                )
+                await self._sleep(delay)
+        raise ProviderError(f"Databento {path} failed after {attempts} attempts: {last}")
 
     async def available_end(self, refresh: bool = False) -> datetime:
         """Latest time with published historical data for ``ohlcv-1m`` (metadata call, not billed)."""

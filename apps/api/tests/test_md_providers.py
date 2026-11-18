@@ -180,6 +180,6 @@ async def test_databento_rate_limit_honours_retry_after_then_gives_up() -> None:
     assert sleeps == [7.0, 7.0]
 
     p, sleeps = _provider(httpx.MockTransport(lambda r: httpx.Response(429)))
-    with pytest.raises(ProviderError, match="retries exhausted"):
+    with pytest.raises(ProviderError, match="failed after 4 attempts: HTTP 429"):
         await p.fetch_candles("ES", NOW - timedelta(hours=1), NOW)
-    assert len(sleeps) == 4
+    assert len(sleeps) == 3  # bounded: 1 + 3 retries, no pointless wait after the last attempt

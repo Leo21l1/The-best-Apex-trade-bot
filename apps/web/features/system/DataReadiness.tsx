@@ -125,7 +125,12 @@ export function DataReadinessPanel() {
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" disabled={busy || !!running || !symbols.length} onClick={() => void estimate()} data-testid="dr-estimate"
                 className="rounded border border-line px-2 py-1 hover:bg-panel-2 disabled:opacity-40">Estimate backfill to 25 sessions</button>
-              {est && (
+              {est?.estimate_failed && (
+                <span className="text-down" data-testid="dr-estimate-failed">
+                  Cost estimate failed; nothing can be started from it. {(est.errors ?? []).join(" · ")}
+                </span>
+              )}
+              {est && !est.estimate_failed && (
                 <>
                   <span data-testid="dr-estimate-result">
                     {est.items.reduce((n, i) => n + i.missing_sessions.length, 0)} missing sessions · estimated cost{" "}

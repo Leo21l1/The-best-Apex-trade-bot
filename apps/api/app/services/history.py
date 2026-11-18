@@ -111,27 +111,83 @@ async def coverage(
     }
 
 
-async def estimate(session: AsyncSession, symbols: list[str], target: int = TARGET_SESSIONS) -> dict[str, Any]:
-    """Missing sessions per symbol and the provider's cost estimate. Nothing is downloaded."""
+FETCHED_KEY = "apex:backfill:fetched:"  # + provider:symbol -> set of trade dates downloaded once
+MAX_SESSIONS_PER_COST_REQUEST = 10
+
+
+def _ranges(sym: str, missing: list[date]) -> list[tuple[list[date], datetime, datetime]]:
+    """Group missing sessions into contiguous runs (by exchange calendar) of at most N sessions.
+
+    Databento charges by the data in the requested range, so cost is additive over time ranges:
+    splitting a span into smaller ranges and summing is exact. Contiguous runs avoid estimating
+    sessions that are already stored (those would be counted if one range spanned them).
+    """
+    out: list[tuple[list[date], datetime, datetime]] = []
+    run: list[date] = []
+    for d in sorted(missing):
+        b = session_bounds(sym, d)
+        if not b:
+            continue
+        if run:
+            prev_end = session_bounds(sym, run[-1])[1]  # type: ignore[index]
+            contiguous = (b[0] - prev_end) <= timedelta(days=4)  # next exchange session (weekends, holidays)
+            if not contiguous or len(run) >= MAX_SESSIONS_PER_COST_REQUEST:
+                out.append((run, session_bounds(sym, run[0])[0], prev_end))  # type: ignore[index]
+                run = []
+        run.append(d)
+    if run:
+        out.append((run, session_bounds(sym, run[0])[0], session_bounds(sym, run[-1])[1]))  # type: ignore[index]
+    return out
+
+
+async def already_fetched(provider: str, symbol: str) -> set[str]:
+    try:
+        return {
+            x.decode() if isinstance(x, bytes) else x
+            for x in await get_redis().smembers(f"{FETCHED_KEY}{provider}:{symbol}")
+        }
+    except (RedisError, OSError):
+        return set()
+
+
+async def estimate(
+    session: AsyncSession,
+    symbols: list[str],
+    target: int = TARGET_SESSIONS,
+    progress: Any = None,
+    provider: Any = None,
+) -> dict[str, Any]:
+    """Missing sessions per symbol and the provider's cost estimate. Nothing is downloaded.
+
+    A failed estimate is reported as failed (``estimate_failed``), never as a cost of zero, and no
+    backfill can be started from it. Sessions already downloaded once are excluded.
+    """
+    from app.adapters.marketdata.base import ProviderError
     from app.marketdata.factory import build_provider
 
+    say = progress or (lambda _msg: None)
     s = get_settings()
-    provider = build_provider(s)
+    own = provider is None
+    provider = provider or build_provider(s)
     items: list[dict[str, Any]] = []
     total_cost: float | None = 0.0
+    failed: list[str] = []
     try:
         for sym in symbols:
             cov = await coverage(session, sym, target=target)
-            missing = [date.fromisoformat(x) for x in cov.get("missing_sessions", [])]
-            windows = []
-            for d in missing:
-                b = session_bounds(sym, d)
-                if b:
-                    windows.append((b[0], b[1]))
+            done = await already_fetched(s.market_data_provider, sym)
+            missing = [date.fromisoformat(x) for x in cov.get("missing_sessions", []) if x not in done]
             cost: float | None = 0.0
             note = None
-            if windows and s.market_data_provider == "databento":
-                cost, note = await _databento_cost(provider, sym, windows)
+            ranges = _ranges(sym, missing)
+            if missing and s.market_data_provider == "databento":
+                say(f"{sym}: {len(missing)} missing sessions in {len(ranges)} cost request(s)")
+                try:
+                    cost = await _databento_cost(provider, sym, ranges, say)
+                except ProviderError as exc:
+                    cost, note = None, f"Cost estimate failed: {exc}"
+                    failed.append(f"{sym}: {exc}")
+                    say(f"{sym}: estimate FAILED - {exc}")
             elif s.market_data_provider == "simulated":
                 note = "Simulated provider: synthetic bars, no cost, labelled SIMULATED."
             if cost is None or total_cost is None:
@@ -144,37 +200,42 @@ async def estimate(session: AsyncSession, symbols: list[str], target: int = TARG
                     "missing_sessions": [d.isoformat() for d in missing],
                     "sessions_stored": cov.get("sessions_stored"),
                     "estimated_cost_usd": cost,
+                    "requests": len(ranges),
                     "note": note,
                 }
             )
     finally:
-        if provider is not None:
+        if own and provider is not None:
             await provider.aclose()
     return {
         "provider": s.market_data_provider,
         "target_sessions": target,
         "items": items,
         "estimated_cost_usd": round(total_cost, 4) if total_cost is not None else None,
+        "estimate_failed": bool(failed),
+        "errors": failed,
         "note": "Estimates come from the provider's metadata.get_cost (not billed). Backfill only starts after "
         "you approve the estimate. Your subscription may already include this data.",
     }
 
 
 async def _databento_cost(
-    provider: Any, symbol: str, windows: list[tuple[datetime, datetime]]
-) -> tuple[float | None, str | None]:
-    """Sum of metadata.get_cost over the missing session windows (clamped to the available end)."""
+    provider: Any, symbol: str, ranges: list[tuple[list[date], datetime, datetime]], say: Any = None
+) -> float:
+    """Sum of metadata.get_cost over the missing ranges (clamped to the available end).
+
+    Raises ProviderError on any failure: a partial sum is never returned as the cost."""
+    from app.adapters.marketdata.base import ProviderError
     from app.adapters.marketdata.databento import DATASET, SCHEMA, error_detail
 
-    try:
-        end_cap = await provider.available_end()
-    except Exception as exc:
-        return None, f"Could not read the historical cutoff: {type(exc).__name__}"
+    say = say or (lambda _m: None)
+    end_cap = await provider.available_end()
     total = 0.0
-    for start, end in windows:
+    for i, (days, start, end) in enumerate(ranges, 1):
         end = min(end, end_cap)
         if start >= end:
             continue
+        say(f"  {symbol} range {i}/{len(ranges)}: {days[0]} to {days[-1]} ({len(days)} sessions)...")
         r = await provider._get(
             "/v0/metadata.get_cost",
             {
@@ -188,21 +249,31 @@ async def _databento_cost(
         )
         if r.status_code >= 400:
             case, msg = error_detail(r, None)
-            return None, f"Cost estimate unavailable (HTTP {r.status_code} {case}): {msg}"
+            raise ProviderError(f"cost request HTTP {r.status_code} {case}: {msg}")
         try:
-            total += float(r.json())
-        except (ValueError, TypeError):
-            return None, "Unexpected cost response from the provider."
-    return round(total, 4), None
+            part = float(r.json())
+        except (ValueError, TypeError) as exc:
+            raise ProviderError("unexpected cost response from the provider") from exc
+        total += part
+        say(f"  {symbol} range {i}/{len(ranges)}: ${part:.4f}")
+    return round(total, 4)
 
 
-async def start_job(symbols: list[str], target: int, approved_cost: float | None, user: str | None) -> dict[str, Any]:
+async def start_job(
+    symbols: list[str],
+    target: int,
+    approved_cost: float | None,
+    user: str | None,
+    plan: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
+    """Queue a backfill limited to ``plan`` (symbol -> approved session dates), when given."""
     job = {
         "id": uuid.uuid4().hex[:12],
         "symbols": symbols,
         "target": target,
         "approved_cost_usd": approved_cost,
         "approved_by": user,
+        "plan": plan,
         "created_at": datetime.now(UTC).isoformat(),
         "status": "queued",
         "progress": {},
@@ -220,8 +291,22 @@ async def get_job() -> dict[str, Any] | None:
     return json.loads(raw) if raw else None
 
 
+async def _save_job(job: dict[str, Any]) -> None:
+    job["updated_at"] = datetime.now(UTC).isoformat()
+    try:
+        await get_redis().set(JOB_KEY, json.dumps(job))
+    except (RedisError, OSError):
+        pass
+
+
 async def run_job_step(session: AsyncSession, provider: Any, max_sessions: int = 3) -> bool:
-    """Backfill up to ``max_sessions`` missing sessions of the approved job. Returns True if work was done."""
+    """Backfill up to ``max_sessions`` sessions of the approved job. Returns True if work was done.
+
+    Resumable and charge-safe: the job only downloads the sessions approved with its estimate
+    (``plan``); a session is marked as downloaded in Redis as soon as it is stored, and progress is
+    saved after every session, so an interrupted job continues where it stopped and never requests
+    a stored or already-downloaded session again. Upserts are idempotent (no duplicate bars).
+    """
     from app.adapters.marketdata.base import ProviderError
     from app.marketdata.store import upsert_candles
     from app.marketdata.validation import sort_dedupe, validate_candle
@@ -229,53 +314,64 @@ async def run_job_step(session: AsyncSession, provider: Any, max_sessions: int =
     job = await get_job()
     if not job or job["status"] in ("done", "failed", "cancelled") or provider is None:
         return False
+    s = get_settings()
     job["status"] = "running"
-    done = 0
+    done = 0  # requests made this cycle (successful or not): failures also use up the per-cycle budget
+    plan = job.get("plan")
     for sym in job["symbols"]:
         cov = await coverage(session, sym, target=job["target"])
+        fetched = await already_fetched(s.market_data_provider, sym)
         prog = job["progress"].setdefault(sym, {"fetched_sessions": 0, "bars": 0})
-        prog["remaining"] = len(cov.get("missing_sessions", []))
-        for ds in cov.get("missing_sessions", []):
+        todo = [d for d in cov.get("missing_sessions", []) if d not in fetched]
+        if plan is not None:
+            todo = [d for d in todo if d in set(plan.get(sym, []))]  # never beyond what was approved
+        for ds in todo:
             if done >= max_sessions:
                 break
             if ds in prog.setdefault("attempted", []):
                 continue
-            prog["attempted"].append(ds)
             b = session_bounds(sym, date.fromisoformat(ds))
             if not b:
                 continue
+            prog["attempted"].append(ds)
+            await _save_job(job)  # recorded before the (billed) request: a crash cannot cause an automatic repeat
             try:
                 candles = await provider.fetch_candles(sym, b[0], b[1])
             except ProviderError as exc:
                 job["errors"].append(f"{sym} {ds}: {exc}"[:300])
+                done += 1
+                await _save_job(job)
                 continue
             now = datetime.now(UTC)
             good = sort_dedupe([c for c in candles if not validate_candle(c, now)])
             if good:
                 await upsert_candles(session, good)
                 await session.commit()
+            try:
+                await get_redis().sadd(f"{FETCHED_KEY}{s.market_data_provider}:{sym}", ds)
+            except (RedisError, OSError):
+                pass
             prog["fetched_sessions"] += 1
             prog["bars"] += len(good)
             done += 1
+            await _save_job(job)
         if done >= max_sessions:
             break
     remaining = 0
     for sym in job["symbols"]:
         cov = await coverage(session, sym, target=job["target"])
-        left = [
-            d for d in cov.get("missing_sessions", []) if d not in job["progress"].get(sym, {}).get("attempted", [])
-        ]
+        fetched = await already_fetched(s.market_data_provider, sym)
+        attempted = job["progress"].get(sym, {}).get("attempted", [])
+        left = [d for d in cov.get("missing_sessions", []) if d not in attempted and d not in fetched]
+        if plan is not None:
+            left = [d for d in left if d in set(plan.get(sym, []))]
         job["progress"].setdefault(sym, {})["remaining"] = len(left)
         job["progress"][sym]["sessions_stored"] = cov.get("sessions_stored")
         remaining += len(left)
     if remaining == 0:
         job["status"] = "done"
         job["finished_at"] = datetime.now(UTC).isoformat()
-    job["updated_at"] = datetime.now(UTC).isoformat()
-    try:
-        await get_redis().set(JOB_KEY, json.dumps(job))
-    except (RedisError, OSError):
-        pass
+    await _save_job(job)
     return done > 0
 
 

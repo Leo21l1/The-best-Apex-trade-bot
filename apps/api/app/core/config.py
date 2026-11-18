@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # A feed is stale when the market is open and no bar arrived for this long.
     market_data_stale_seconds: int = Field(default=150, ge=10)
     databento_api_key: SecretStr | None = None
+    #: Databento HTTP read timeout per request, and bounded retries (exponential backoff) for free
+    #: metadata requests. Billed downloads are never retried after the request reached Databento.
+    databento_timeout_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
+    databento_max_retries: int = Field(default=3, ge=0, le=6)
     #: Continuous front-month rule: v = highest previous-day volume (follows the roll traders use),
     #: c = calendar (front until expiry), n = highest open interest.
     databento_roll_rule: Literal["c", "v", "n"] = "v"

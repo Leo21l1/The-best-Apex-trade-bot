@@ -1247,7 +1247,10 @@ export interface DataReadiness {
 export interface BackfillEstimate {
   provider: string;
   target_sessions: number;
-  items: { symbol: string; missing_sessions: string[]; sessions_stored: number | null; estimated_cost_usd: number | null; note: string | null }[];
+  items: { symbol: string; missing_sessions: string[]; sessions_stored: number | null; estimated_cost_usd: number | null; requests?: number; note: string | null }[];
   estimated_cost_usd: number | null;
+  /** True when any cost request failed: no backfill can be started from this estimate. */
+  estimate_failed?: boolean;
+  errors?: string[];
   note: string;
 }

@@ -75,6 +75,12 @@ async def start(body: BackfillIn, user: AdminUser, session: SessionDep) -> dict[
         raise HTTPException(status.HTTP_409_CONFLICT, "A backfill is already running.")
     syms = _symbols(body.symbols)
     est = await history.estimate(session, syms, body.target_sessions)
+    if est.get("estimate_failed"):
+        # Never start a (possibly paid) download when the cost could not be established.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Cost estimate failed, nothing was started: " + "; ".join(est.get("errors", []))[:400],
+        )
     cost = est["estimated_cost_usd"]
     if cost is None and not body.acknowledge_unknown_cost:
         raise HTTPException(
@@ -86,7 +92,8 @@ async def start(body: BackfillIn, user: AdminUser, session: SessionDep) -> dict[
             status.HTTP_412_PRECONDITION_FAILED,
             f"Estimated cost is ${cost:.4f}; approve at least that amount to start.",
         )
-    out = await history.start_job(syms, body.target_sessions, cost, user.email)
+    plan = {it["symbol"]: it["missing_sessions"] for it in est["items"]}
+    out = await history.start_job(syms, body.target_sessions, cost, user.email, plan=plan)
     out["estimate"] = est
     return out
 
