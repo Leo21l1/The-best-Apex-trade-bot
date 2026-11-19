@@ -46,6 +46,20 @@ MANDATORY: dict[str, tuple[int, ...]] = {
 }
 #: Bumped whenever factor or level rules change, and stored with every recorded signal.
 ENGINE_VERSION = "setups-1.1"
+FAMILY_OF = {
+    "mtf_trend": "continuation",
+    "vwap_trend": "continuation",
+    "momentum_pullback": "continuation",
+    "orb": "breakout",
+    "breakout_retest": "breakout",
+    "vol_expansion": "breakout",
+    "sweep_reversal": "reversal",
+    "mean_reversion": "reversal",
+    "smc_sweep_mss": "smc",
+    "smc_ob_retest": "smc",
+    "smc_fvg_retest": "smc",
+}
+MAJOR_TARGET_PREFIXES = ("Previous day", "Previous week", "Previous month", "Overnight", "Prior RTH", "15m swing")
 STATES = (
     "WAIT",
     "DEVELOPING BUY",
@@ -71,6 +85,17 @@ class SetupConfig:
     min_risk_atr: float = 0.3
     missed_r: float = 0.5  # price this many R beyond the entry zone (toward the target) = MISSED
     risk_warning_usd: float = 1000.0  # 1-contract loss at the stop above this is flagged (never altered)
+    #: EXPERIMENTAL research hypotheses (never used by the live analyzer; live = both False):
+    #: H1 - premium/discount location is required in factor 1 only for reversal and SMC families.
+    #: H2 - continuation/breakout TP1 uses major levels only (session/period liquidity, 15m swing pivots).
+    exp_family_location: bool = False
+    exp_major_targets: bool = False
+    #: H3 - when 15m swing structure is unconfirmed (neutral), use 15m internal structure for the bias,
+    #: mirroring the existing 1h fallback (the 8-day window rarely confirms a 15m swing break).
+    exp_15m_internal_fallback: bool = False
+    #: H4 - the strategy's own stop with its second designed target as the exit (the earlier "T2" research
+    #: configuration) instead of the structural levels; same 1.5 net R:R gate.
+    exp_native_levels: bool = False
     costs: ChecklistConfig = field(default_factory=ChecklistConfig)
 
 
@@ -91,7 +116,7 @@ def _same_break(lv: dict[str, Any], structure: dict[str, Any], tick: float) -> b
     return abs(lv["price"] - structure["level"]) <= 2 * tick and dt <= 900
 
 
-def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any]]:
+def factors(doc: dict[str, Any], d: str, cfg: SetupConfig, family: str | None = None) -> list[dict[str, Any]]:
     """The five factors for direction ``d`` ('bullish' | 'bearish') from an analyzer document."""
     c = doc.get("context") or {}
     now = datetime.fromisoformat(doc["as_of"])
@@ -100,6 +125,13 @@ def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any
 
     # 1 -- higher-timeframe bias (15m swing, 1h, daily, location)
     htf, mid, bias_dir = c.get("htf"), c.get("mid"), c.get("bias_dir")
+    if cfg.exp_15m_internal_fallback and mid in ("neutral", None) and c.get("mid_internal") in ("bullish", "bearish"):
+        mid = c["mid_internal"]
+        if bias_dir != "wait":
+            if htf in ("bullish", "bearish") and htf != mid:
+                bias_dir = "neutral"
+            else:
+                bias_dir = htf if htf in ("bullish", "bearish") else mid
     pd15 = c.get("pd15")
     daily = c.get("daily") or {}
     dtxt = f" Daily: last completed session closed {daily['trend']}." if daily.get("trend") else ""
@@ -107,7 +139,11 @@ def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any
         out.append(_f(1, "UNKNOWN", "Not enough confirmed 1h/15m structure." + dtxt))
     elif bias_dir != d:
         out.append(_f(1, "FAIL", f"Bias is {bias_dir} (1h {htf}, 15m {mid}), not {d}." + dtxt))
-    elif pd15 and pd15["zone"] in (("premium", "above range") if long else ("discount", "below range")):
+    elif (
+        pd15
+        and pd15["zone"] in (("premium", "above range") if long else ("discount", "below range"))
+        and not (cfg.exp_family_location and family in ("continuation", "breakout"))
+    ):
         out.append(
             _f(
                 1,
@@ -308,6 +344,49 @@ def _round(p: float, tick: float, mode: str) -> float:
     return round(q * tick, 6)
 
 
+def _native_plan(
+    doc: dict[str, Any], sig: dict[str, Any], entry: float, zone: tuple[float, float], cfg: SetupConfig
+) -> dict[str, Any]:
+    """H4: the strategy's designed stop/targets, tick-rounded conservatively, same cost model and gate."""
+    tick = doc["tick_size"]
+    long = sig["direction"] == "long"
+    stop = _round(sig["stop"], tick, "down" if long else "up")
+    # Exit at the strategy's SECOND designed target (its T1 is 1.0-1.5R gross, which can never clear the
+    # 1.5 net R:R gate after costs); this matches the earlier "T2" research configurations.
+    tps = [_round(t, tick, "down" if long else "up") for t in (sig.get("targets") or [])[1:2]]
+    ok = (entry - stop) * (1 if long else -1) > 0
+    rr = []
+    for tp in tps:
+        r = reward_risk(doc["symbol"], sig["direction"], entry, stop, tp, cfg.costs) if ok else {"valid": False}
+        rr.append(
+            {
+                "gross": r.get("gross_ratio"),
+                "net": r.get("ratio"),
+                "net_reward": r.get("net_reward"),
+                "net_risk": r.get("net_risk"),
+                "costs": r.get("costs"),
+            }
+            if r.get("valid")
+            else None
+        )
+    return {
+        "entry": entry,
+        "entry_zone": list(zone),
+        "stop": stop if ok else None,
+        "stop_basis": "strategy-native stop",
+        "tp1": tps[0] if tps else None,
+        "tp1_basis": "strategy-native target 2 (exit)",
+        "tp2": None,
+        "tp2_basis": None,
+        "rr_tp1": rr[0] if rr else None,
+        "rr_tp2": rr[1] if len(rr) > 1 else None,
+        "risk_points": abs(entry - stop) if ok else None,
+        "risk_usd_1c": rr[0]["net_risk"] if rr and rr[0] else None,
+        "risk_warning": None,
+        "note": "H4 experimental: strategy-native exits.",
+    }
+
+
 def plan(doc: dict[str, Any], sig: dict[str, Any], fs: list[dict[str, Any]], cfg: SetupConfig) -> dict[str, Any]:
     """Entry zone, structural stop and liquidity/structure targets for one strategy signal."""
     c = doc.get("context") or {}
@@ -321,6 +400,8 @@ def plan(doc: dict[str, Any], sig: dict[str, Any], fs: list[dict[str, Any]], cfg
     zone = (_round(min(lo, hi), tick, "down"), _round(max(lo, hi), tick, "up"))
     min_risk = max(4 * tick, cfg.min_risk_atr * atr5)
     buffer = max(2 * tick, cfg.stop_buffer_atr * atr5)
+    if cfg.exp_native_levels:
+        return _native_plan(doc, sig, entry, zone, cfg)
     # --- stop: the nearest structural invalidation beyond the entry zone
     cands: list[tuple[float, str]] = []
     for lv in doc.get("levels", []):
@@ -357,15 +438,23 @@ def plan(doc: dict[str, Any], sig: dict[str, Any], fs: list[dict[str, Any]], cfg
     risk = abs(entry - stop) if stop is not None else None
     # --- targets: opposing liquidity, higher-timeframe pivots and opposing zones
     tcands: list[tuple[float, str]] = []
+    major_only = cfg.exp_major_targets and FAMILY_OF.get(sig["strategy_id"]) in ("continuation", "breakout")
     for lv in doc.get("levels", []):
         if lv.get("type") == "liquidity" and lv["valid"] and (lv["price"] - entry) * s > 0:
+            if major_only and not lv["label"].startswith(MAJOR_TARGET_PREFIXES):
+                continue
             tcands.append((lv["price"], lv["label"]))
-        if lv.get("type") == "zone" and (lv["price"] - entry) * s > 0 and lv.get("bottom") is not None:
+        if (
+            lv.get("type") == "zone"
+            and (lv["price"] - entry) * s > 0
+            and lv.get("bottom") is not None
+            and not major_only
+        ):
             opp = "Bearish" if long else "Bullish"
             if lv["label"].startswith(opp):
                 tcands.append((lv["bottom"] if long else lv["top"], lv["label"]))
     a15 = (doc.get("advanced") or {}).get("15m") or {}
-    for layer in ("internal", "swing"):
+    for layer in ("swing",) if major_only else ("internal", "swing"):
         for p in (a15.get(layer) or {}).get("pivots") or []:
             if (p["kind"] == "high") == long and (p["price"] - entry) * s > 0:
                 tcands.append((p["price"], f"15m {layer} {'high' if long else 'low'}"))
@@ -431,7 +520,7 @@ def evaluate(
 ) -> dict[str, Any]:
     """One strategy signal: factors, mandatory checks, levels, the 12 requirements and the verdict."""
     d = "bullish" if sig["direction"] == "long" else "bearish"
-    fs = factors(doc, d, cfg)
+    fs = factors(doc, d, cfg, FAMILY_OF.get(sig["strategy_id"]))
     n = score(fs)
     lv = plan(doc, sig, fs, cfg)
     c = doc.get("context") or {}

@@ -273,6 +273,7 @@ function AnalyzerChart({ a }: { a: Analysis }) {
   const [tf, setTf] = useState<Timeframe>("5m");
   const [o, setO] = useState<OverlayOptions>(DEFAULT_OVERLAYS);
   const [plan, setPlan] = useState(true);
+  const [vol, setVol] = useState(true);
   const { bars } = useCandles(a.symbol, tf);
   const times = useMemo(() => bars.map((b) => b.t), [bars]);
   const smc = useMemo(() => analyzerShapes(a, tf, times, o), [a, tf, times, o]);
@@ -300,10 +301,11 @@ function AnalyzerChart({ a }: { a: Analysis }) {
           <label key={k} className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" className="accent-cyan-400" checked={o[k]} onChange={() => toggle(k)} />{label}</label>
         ))}
         <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" className="accent-cyan-400" checked={plan} onChange={() => setPlan((p) => !p)} data-testid="plan-toggle" />Entry / SL / TP</label>
+        <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" className="accent-cyan-400" checked={vol} onChange={() => setVol((p) => !p)} />Volume</label>
       </div>
       {bars.length ? (
         <CandleChart bars={bars} tick={a.tick_size} daily={false} seriesKey={`${a.symbol}:${tf}`} height="h-[360px] w-full sm:h-[460px]"
-          toggles={{ ema: false, vwap: true, levels: false, signals: false, news: false }} smc={smc} lines={lines} />
+          toggles={{ ema: false, vwap: true, levels: false, signals: false, news: false }} smc={smc} lines={lines} showVolume={vol} />
       ) : <p className="py-16 text-center text-sm text-faint">No chart data for {a.symbol}.</p>}
       <p className="mt-2 text-[11px] text-faint">Only the nearest active zones are drawn. Plan lines are hypothetical analysis levels.</p>
     </Panel>

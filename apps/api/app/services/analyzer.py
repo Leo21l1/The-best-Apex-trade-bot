@@ -787,6 +787,7 @@ def build(
         "htf": htf,
         "htf_basis": htf_basis,
         "mid": mid,
+        "mid_internal": trend_of("15m", "internal"),
         "short": short,
         "bias_dir": bias_dir,
         "pd15": pd15,

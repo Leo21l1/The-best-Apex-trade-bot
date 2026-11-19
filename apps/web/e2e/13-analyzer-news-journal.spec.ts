@@ -32,7 +32,7 @@ test("market analyzer: three cards, MNQ honestly unavailable, focused analysis s
   await expect(page.getByTestId("five-factors").locator("li")).toHaveCount(5);
   await expect(detail.getByText("5 · Market structure & key levels")).toBeVisible();
   await expect(detail.getByText("6 · Chart")).toBeVisible();
-  await expect(page.getByTestId("overlay-toggles").getByRole("checkbox")).toHaveCount(6);
+  await expect(page.getByTestId("overlay-toggles").getByRole("checkbox")).toHaveCount(7);
   await page.getByTestId("advanced").locator("summary").click();
   await expect(page.getByText("Smart Money setups")).toBeVisible();
   await expect(page.getByText(/not a probability/).first()).toBeVisible();

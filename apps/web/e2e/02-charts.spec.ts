@@ -19,7 +19,7 @@ test.describe("advanced charts", () => {
     await expect(page.getByRole("heading", { name: "Advanced Charts" })).toBeVisible();
 
     // Provenance is explicit: provider, data class, timestamp.
-    await expect(page.getByText("SIMULATED DATA")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("SIMULATED DATA", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("chart-provider")).toContainText("simulated");
     await expect(page.getByTestId("chart-last-time")).toContainText("ET");
     await expect(page.getByTestId("candle-chart").locator("canvas").first()).toBeVisible();

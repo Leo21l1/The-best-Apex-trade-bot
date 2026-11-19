@@ -52,7 +52,7 @@ const LEVEL_NAMES: Record<string, string> = {
  */
 export function CandleChart({
   bars, tick, daily, seriesKey, onHover, overlays, toggles, lines, markers, onEventClick, height,
-  smc, highlightPrice, onPatternClick,
+  smc, highlightPrice, onPatternClick, showVolume = true,
 }: {
   bars: Bar[];
   tick: number;
@@ -69,6 +69,8 @@ export function CandleChart({
   smc?: { zones: ZoneOut[]; segments: SegmentOut[]; markers: MarkerOut[] } | null;
   highlightPrice?: number | null;
   onPatternClick?: (id: string) => void;
+  /** Volume histogram visibility (default on). */
+  showVolume?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -233,6 +235,10 @@ export function CandleChart({
     ms.sort((a, b) => (a.time as number) - (b.time as number));
     markerApi.current?.setMarkers(ms);
   }, [overlays, toggles, lines, markers, bars, smc, highlightPrice]);
+
+  useEffect(() => {
+    volume.current?.applyOptions({ visible: showVolume });
+  }, [showVolume]);
 
   return <div ref={container} className={height ?? "h-[440px] w-full sm:h-[520px]"} data-testid="candle-chart" />;
 }

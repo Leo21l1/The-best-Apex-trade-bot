@@ -289,7 +289,22 @@ async def data_audit_cmd(symbols: list[str], days: int) -> int:
     return 0
 
 
-async def confluence_study_cmd(symbol: str, days: int, holdout: int, out_dir: str) -> int:
+async def confluence_combine_cmd(files: list[str], variant: str) -> int:
+    """Shared account across instruments from existing study JSON files (no market data is loaded)."""
+    import json
+    from pathlib import Path
+
+    from app.research import confluence_study as cs
+
+    res = [json.loads(Path(f).read_text()) for f in files]  # noqa: ASYNC240
+    out = cs.combine(res, variant)
+    print(json.dumps(out, indent=2, default=str))
+    return 0
+
+
+async def confluence_study_cmd(
+    symbol: str, days: int, holdout: int, out_dir: str, max_risk: float | None = None
+) -> int:
     """Compare 3/5, 4/5 and 5/5 confluence thresholds on stored bars, excluding the final holdout (read-only)."""
     import json
     from pathlib import Path
@@ -330,7 +345,15 @@ async def confluence_study_cmd(symbol: str, days: int, holdout: int, out_dir: st
         rules = to_ruleset(await load_rules(session))
         study = await latest(session, symbol)
     hs = ((study.result.get("plan") or {}).get("holdout") or [None])[0] if study else None
-    limits = {"per_trade": 1000.0, "daily_loss": float(rules.daily_loss_limit), "max_dd": float(rules.max_drawdown)}
+    limits = {
+        "per_trade": max_risk or s.signal_risk_warning_usd,
+        "daily_loss": float(rules.daily_loss_limit),
+        "max_dd": float(rules.max_drawdown),
+    }
+    print(
+        f"Risk profile: max planned risk ${limits['per_trade']:,.0f}/trade, daily loss ${limits['daily_loss']:,.0f}, "
+        f"trailing drawdown ${limits['max_dd']:,.0f} (rules verified: {rules.verified})."
+    )
     print(f"Excluding the stored research study's holdout from {hs or 'n/a'} and the last {holdout} sessions.")
     res = cs.run(symbol, bars, d1, holdout_sessions=holdout, holdout_start=hs, events=evs, cfg=cfg, risk_limits=limits)
     out = Path(out_dir)
@@ -830,6 +853,12 @@ def main(argv: list[str] | None = None) -> int:
     cfs.add_argument("--days", type=int, default=365)
     cfs.add_argument("--holdout-sessions", type=int, default=50)
     cfs.add_argument("--out-dir", default="research_out")
+    cfs.add_argument("--max-risk", type=float, default=None, help="Max planned risk per trade (default: settings)")
+    pbk = sub.add_parser("strategy-playbook", help="Write the strategy playbook generated from the code")
+    pbk.add_argument("--out", default="docs/strategy-playbook.md")
+    cfc = sub.add_parser("confluence-combine", help="Shared-account view across study JSON files (ES/NQ/MNQ)")
+    cfc.add_argument("files", nargs="+")
+    cfc.add_argument("--variant", default="live")
     dc = sub.add_parser("databento-check", help="Diagnose Databento historical cutoff and live entitlement")
     dc.add_argument("--live-seconds", type=int, default=90)
     args = parser.parse_args(argv)
@@ -881,7 +910,19 @@ def main(argv: list[str] | None = None) -> int:
                 syms = [x.strip().upper() for x in args.symbols.split(",") if x.strip()]
                 return await contract_map_cmd(syms, args.days, args.out)
             if args.cmd == "confluence-study":
-                return await confluence_study_cmd(args.symbol.upper(), args.days, args.holdout_sessions, args.out_dir)
+                return await confluence_study_cmd(
+                    args.symbol.upper(), args.days, args.holdout_sessions, args.out_dir, args.max_risk
+                )
+            if args.cmd == "strategy-playbook":
+                from pathlib import Path
+
+                from app.research.playbook import playbook_md
+
+                Path(args.out).write_text(playbook_md())  # noqa: ASYNC240
+                print(f"Wrote {args.out}")
+                return 0
+            if args.cmd == "confluence-combine":
+                return await confluence_combine_cmd(args.files, args.variant)
             if args.cmd == "rr-study":
                 syms = [x.strip() for x in args.strategies.split(",") if x.strip()]
                 return await rr_study_cmd(args.symbol.upper(), args.days, syms, args.out)

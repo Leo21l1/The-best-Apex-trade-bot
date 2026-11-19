@@ -334,6 +334,7 @@ class Outcome:
     news: str
     score: int
     month: str
+    regime: str = "unknown"
 
 
 def outcome_rows(items: Sequence[dict[str, Any]]) -> list[Outcome]:
@@ -361,6 +362,7 @@ def outcome_rows(items: Sequence[dict[str, Any]]) -> list[Outcome]:
                 x.get("news_status") or "unknown",
                 x["score"],
                 trading_day(ts).isoformat()[:7],
+                x.get("regime") or "unknown",
             )
         )
     return sorted(out, key=lambda o: o.exit_ts)
@@ -404,6 +406,7 @@ def compare_thresholds(items: Sequence[dict[str, Any]], counts: dict[int, int] |
             "by_instrument": {g: _summ([o for o in sub if o.symbol == g]) for g in sorted({o.symbol for o in sub})},
             "by_session": {g: _summ([o for o in sub if o.session == g]) for g in sorted({o.session for o in sub})},
             "by_news": {g: _summ([o for o in sub if o.news == g]) for g in sorted({o.news for o in sub})},
+            "by_regime": {g: _summ([o for o in sub if o.regime == g]) for g in sorted({o.regime for o in sub})},
         }
     exact = {f"exactly {k}/5": _summ([o for o in rows if o.score == k]) for k in (3, 4, 5)}
     return {
