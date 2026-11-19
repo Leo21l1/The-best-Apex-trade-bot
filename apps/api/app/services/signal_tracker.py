@@ -269,6 +269,8 @@ def public(r: SetupSignal) -> dict[str, Any]:
         "tp1": r.tp1,
         "tp2": r.tp2,
         "net_rr_tp1": r.net_rr_tp1,
+        "risk_usd_1c": r.net_risk_usd,
+        "risk_warning": (cand.get("levels") or {}).get("risk_warning"),
         "rr_tp2": (cand.get("levels") or {}).get("rr_tp2"),
         "stop_basis": (cand.get("levels") or {}).get("stop_basis"),
         "tp1_basis": (cand.get("levels") or {}).get("tp1_basis"),

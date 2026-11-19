@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "PROJECT APEX", template: "%s · PROJECT APEX" },
-  description: "Analysis-only futures trading intelligence workstation.",
+  description: "PROJECT APEX - Futures Market Intelligence (analysis only).",
   robots: { index: false, follow: false },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0e1013",
+  themeColor: "#060a12",
   colorScheme: "dark",
 };
 

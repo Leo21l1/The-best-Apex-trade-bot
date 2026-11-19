@@ -21,7 +21,10 @@ test.describe.serial("dashboard workflows", () => {
     await expect(page.getByTestId("execution-mode")).toHaveText("ANALYSIS ONLY");
     // Exactly three primary tabs; no execution or autopilot controls in normal navigation.
     const nav = page.getByRole("navigation", { name: "Primary" });
-    await expect(nav.getByRole("link")).toHaveText(["Market Analyzer", "News", "Trading Journal"]);
+    await expect(nav.getByRole("link")).toHaveCount(3);
+    for (const name of ["Market Analyzer", "News", "Trading Journal"]) {
+      await expect(nav.getByRole("link", { name, exact: true })).toBeVisible();
+    }
     await expect(page.getByRole("link", { name: "Settings and health" })).toBeVisible();
     await page.goto("/overview");
     await expect(page.getByRole("heading", { name: "Session Overview", level: 1 })).toBeVisible();

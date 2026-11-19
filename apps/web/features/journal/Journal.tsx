@@ -8,6 +8,7 @@ import { CollapsiblePanel, PnlCalendar } from "@/components/ui/viz";
 import { api, ApiError } from "@/lib/api";
 import { BrokerImport } from "./BrokerImport";
 import { RecordTrade } from "./RecordTrade";
+import { JournalPerformance } from "./JournalPerformance";
 import { DeletedTrades, TradeEditor } from "./TradeEditor";
 import { formatEt } from "@/lib/format";
 import { money } from "@/lib/money";
@@ -67,6 +68,7 @@ export function Journal() {
               </div>
             </Panel>
           )}
+          <JournalPerformance refreshKey={data?.trades.length ?? 0} />
           {data && data.trades.length > 0 && (
             <CollapsiblePanel id="journal-calendar" title="Calendar (daily net P&L)">
               <PnlCalendar days={dailyPnl(data.trades)} month={month || data.trades[0]!.trading_date.slice(0, 7)} onMonth={setMonth} />

@@ -235,6 +235,7 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
             "no broker order routing is implemented; Apex accounts can never be traded automatically",
         )
     )
+    out.extend(await _analysis_checks(session, symbols, now))
     ok = not any(x["result"] == "FAIL" for x in out)
     return {"checks": out, "ok": ok, "at": now.isoformat(), "ny_time": now.astimezone(ET).strftime("%Y-%m-%d %H:%M %Z")}
 
@@ -355,3 +356,63 @@ async def _symbol_spec(
         "PASS" if ok else "WARN",
         desc + ("" if ok else "; the live feed has not reported this instrument's own instrument_id/contract yet"),
     )
+
+
+async def _analysis_checks(session: AsyncSession, symbols: list[str], now: datetime) -> list[dict[str, str]]:
+    """Migrations, the live analyzer (SMC + setup engine) per instrument, journal and the signal window."""
+    from pathlib import Path
+
+    from app.models.research import JournalTrade
+    from app.services import analyzer
+
+    out: list[dict[str, str]] = []
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        ini = Path(__file__).resolve().parents[2] / "alembic.ini"  # noqa: ASYNC240 (path math, no I/O)
+        head = ScriptDirectory.from_config(Config(str(ini))).get_current_head()
+        cur = (await session.execute(text("SELECT version_num FROM alembic_version"))).scalar()
+        out.append(
+            _line(
+                "Migrations",
+                "PASS" if cur == head else "FAIL",
+                f"database {cur}, code {head}" + ("" if cur == head else " - run: alembic upgrade head"),
+            )
+        )
+    except Exception as exc:  # report, never a forced pass
+        out.append(_line("Migrations", "WARN", f"could not compare with the code's head: {type(exc).__name__}"))
+    for sym in symbols:
+        try:
+            doc = await analyzer.snapshot(session, sym, now, use_cache=False)
+        except Exception as exc:
+            await session.rollback()
+            out.append(_line(f"{sym} analysis", "FAIL", f"analyzer error: {type(exc).__name__}: {str(exc)[:120]}"))
+            continue
+        tfs = doc.get("timeframes") or {}
+        ok_tfs = [k for k, v in tfs.items() if v.get("available")]
+        sig = doc.get("signal") or {}
+        conf = doc.get("confluence") or {}
+        if not doc["data"].get("available"):
+            out.append(_line(f"{sym} analysis", "FAIL", doc["data"].get("note") or "DATA UNAVAILABLE"))
+            continue
+        out.append(
+            _line(
+                f"{sym} analysis",
+                "PASS" if len(ok_tfs) == 4 else "WARN",
+                f"SMC active on {', '.join(ok_tfs) or 'no timeframe'}; bias {doc['bias']['label']}; setup "
+                f"{sig.get('display_state') or sig.get('state')}; confluence {conf.get('score')}/5; data "
+                f"{doc['data']['label']} ({doc['data'].get('confidence', 'n/a')})",
+            )
+        )
+    n = (await session.execute(select(func.count()).select_from(JournalTrade))).scalar() or 0
+    out.append(_line("Trading journal", "PASS", f"accessible; {n} recorded trade(s)"))
+    out.append(
+        _line(
+            "Signal window",
+            "INFO",
+            "analysis and developing setups update all session; strategy triggers are evaluated 09:35-15:30 ET "
+            "and confirmations also need the New York session (unchanged rules)",
+        )
+    )
+    return out

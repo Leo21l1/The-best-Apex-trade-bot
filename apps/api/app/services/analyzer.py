@@ -766,6 +766,13 @@ def build(
 
     # ------------------------------------------------------------------ five-factor technical setup
     d1_done = [b for b in d1 if b.ts.date() < trading_day(now)]
+    if d1_done:
+        # Change vs the previous COMPLETED session's last price (stored daily bar), never estimated.
+        prev = d1_done[-1].close
+        data["prev_close"] = prev
+        data["prev_session"] = d1_done[-1].ts.date().isoformat()
+        data["change"] = round(price - prev, 6)
+        data["change_pct"] = round((price - prev) / prev * 100, 3) if prev else None
     daily = None
     if len(d1_done) >= 2:
         daily = {
@@ -1107,6 +1114,7 @@ async def snapshot(
         min_net_rr=s.min_net_reward_risk,
         expiry_minutes=s.signal_expiry_minutes,
         costs=_cost_cfg(),
+        risk_warning_usd=s.signal_risk_warning_usd,
     )
     doc = build(symbol, m1, d1, now, feed, provider, news, evaluations, sigs, evidences, _cost_cfg(), scfg)
     # Record new setups once (immutable), advance open ones, and show a recorded confirmation unchanged.

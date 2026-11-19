@@ -17,10 +17,13 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={cx("min-w-0 rounded-lg border border-line bg-panel", className)}>
+    <section className={cx("apex-panel min-w-0 rounded-xl", className)}>
       {title !== undefined && (
-        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-          <h2 className="text-[13px] font-medium tracking-wide text-muted uppercase">{title}</h2>
+        <header className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2.5">
+          <h2 className="flex items-center gap-2 text-[12px] font-semibold tracking-[0.12em] text-muted uppercase">
+            <span className="h-3 w-0.5 rounded-full bg-gradient-to-b from-accent to-accent-2" aria-hidden />
+            {title}
+          </h2>
           {actions}
         </header>
       )}
@@ -95,7 +98,7 @@ export function Callout({
   }[tone];
   const titleColor = { info: "text-accent", warn: "text-warn", danger: "text-down" }[tone];
   return (
-    <div role={tone === "info" ? "note" : "alert"} className={cx("rounded-md border px-4 py-3", style)}>
+    <div role={tone === "info" ? "note" : "alert"} className={cx("rounded-xl border px-4 py-3", style)}>
       <p className={cx("text-sm font-medium", titleColor)}>{title}</p>
       {children && <div className="mt-1 text-sm text-muted">{children}</div>}
     </div>
@@ -136,8 +139,8 @@ export function Stat({
 }) {
   return (
     <div className="min-w-0">
-      <p className="text-xs text-muted">{label}</p>
-      <p className="mt-1 truncate font-mono text-lg text-text">{value}</p>
+      <p className="apex-label">{label}</p>
+      <p className="mt-1 truncate font-mono text-lg font-semibold text-text">{value}</p>
       {hint && <p className="mt-0.5 text-xs text-faint">{hint}</p>}
     </div>
   );

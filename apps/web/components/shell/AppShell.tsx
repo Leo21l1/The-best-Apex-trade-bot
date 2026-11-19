@@ -58,7 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <TopBar onPalette={() => setPalette(true)} />
         <NewsTicker />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6">{children}</main>
-        <footer className="border-t border-line px-6 py-3 text-[11px] text-faint">
+        <footer className="mx-auto w-full max-w-[1400px] border-t border-line/60 px-6 py-4 text-[11px] text-faint">
           Analysis only. PROJECT APEX does not connect to a broker and never places, modifies or cancels
           orders. Patterns are candle-geometry heuristics, not predictions.
         </footer>

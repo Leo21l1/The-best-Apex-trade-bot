@@ -24,9 +24,9 @@ import type { MarkerOut, SegmentOut, ZoneOut } from "@/lib/smc";
 import { ZonesPrimitive } from "./zones";
 
 const COLORS = {
-  bg: "#11141a", text: "#8b939e", grid: "#1b2028", border: "#262b33",
-  up: "#34d399", down: "#f05a5e", ema20: "#38bdf8", ema50: "#a78bfa", vwap: "#f5b84a",
-  high: "#f05a5e", medium: "#f5b84a", low: "#8b939e",
+  bg: "#0b1220", text: "#93a1b8", grid: "#152034", border: "#1e2b42",
+  up: "#10b981", down: "#ef4444", ema20: "#22d3ee", ema50: "#a78bfa", vwap: "#f59e0b",
+  high: "#ef4444", medium: "#f59e0b", low: "#93a1b8",
 };
 
 const etTime = new Intl.DateTimeFormat("en-US", { timeZone: MARKET_TZ, hour: "2-digit", minute: "2-digit", hour12: false });
@@ -35,7 +35,7 @@ const etFull = new Intl.DateTimeFormat("en-US", { timeZone: MARKET_TZ, month: "s
 const utcDate = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
 
 const toCandle = (b: Bar) => ({ time: b.t as UTCTimestamp, open: b.o, high: b.h, low: b.l, close: b.c });
-const toVolume = (b: Bar) => ({ time: b.t as UTCTimestamp, value: b.v, color: b.c >= b.o ? "rgba(52,211,153,0.3)" : "rgba(240,90,94,0.3)" });
+const toVolume = (b: Bar) => ({ time: b.t as UTCTimestamp, value: b.v, color: b.c >= b.o ? "rgba(16,185,129,0.32)" : "rgba(239,68,68,0.32)" });
 
 export interface PriceLineSpec { price: number; title: string; color: string; dashed?: boolean }
 export interface ExtraMarker { t: number; text: string; color: string; position: "aboveBar" | "belowBar"; shape: "arrowUp" | "arrowDown" | "circle" | "square" }

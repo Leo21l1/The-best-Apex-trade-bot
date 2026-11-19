@@ -70,6 +70,7 @@ class SetupConfig:
     stop_buffer_atr: float = 0.1
     min_risk_atr: float = 0.3
     missed_r: float = 0.5  # price this many R beyond the entry zone (toward the target) = MISSED
+    risk_warning_usd: float = 1000.0  # 1-contract loss at the stop above this is flagged (never altered)
     costs: ChecklistConfig = field(default_factory=ChecklistConfig)
 
 
@@ -123,7 +124,7 @@ def factors(doc: dict[str, Any], d: str, cfg: SetupConfig) -> list[dict[str, Any
     short = c.get("short")
     ev = None
     for tf in ("5m", "1m"):
-        for e in reversed(((doc.get("advanced") or {}).get(tf) or {}).get("internal", {}).get("events") or []):
+        for e in reversed((((doc.get("advanced") or {}).get(tf) or {}).get("internal") or {}).get("events") or []):
             if e["direction"] == d and _recent(e["time"], now, cfg.recent_minutes):
                 ev = {**e, "tf": tf}
                 break
@@ -414,6 +415,13 @@ def plan(doc: dict[str, Any], sig: dict[str, Any], fs: list[dict[str, Any]], cfg
         "rr_tp1": rr[0] if rr else None,
         "rr_tp2": rr[1] if len(rr) > 1 else None,
         "risk_points": risk,
+        "risk_usd_1c": rr[0]["net_risk"] if rr and rr[0] else None,
+        "risk_warning": (
+            f"1-contract loss at the stop is ${rr[0]['net_risk']:,.2f}, above the ${cfg.risk_warning_usd:,.0f} "
+            "account risk limit: the structural stop was not moved; consider a smaller contract or skip it."
+        )
+        if rr and rr[0] and rr[0]["net_risk"] > cfg.risk_warning_usd
+        else None,
         "note": "Analytical levels, not orders or guaranteed fills.",
     }
 

@@ -24,6 +24,8 @@ test("mobile: every page fits the screen width and the tabs navigate", async ({ 
   expect(overflowing).toEqual([]);
 
   await page.goto("/");
+  await expect(page.getByTestId("card-ES")).toBeVisible({ timeout: 30_000 });
+  await page.screenshot({ path: "test-results/visual/mobile-analyzer.png", fullPage: true });
   await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "News" }).click();
   await expect(page.getByRole("heading", { name: "News", level: 1 })).toBeVisible();
   await page.getByRole("link", { name: "Settings and health" }).click();

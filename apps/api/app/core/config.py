@@ -71,20 +71,9 @@ class Settings(BaseSettings):
 
     # Market data (Phase 2). "none" shows no prices anywhere.
     market_data_provider: Literal["none", "simulated", "databento"] = "none"
-    market_data_symbols: list[str] = [
-        "ES",
-        "MES",
-        "NQ",
-        "MNQ",
-        "YM",
-        "MYM",
-        "RTY",
-        "M2K",
-        "CL",
-        "MCL",
-        "GC",
-        "MGC",
-    ]
+    #: Live subscriptions. PROJECT APEX analyzes ES, NQ and MNQ only; data already stored for other symbols
+    #: is kept. Add symbols here (APEX_MARKET_DATA_SYMBOLS) only if you need them again.
+    market_data_symbols: list[str] = Field(default_factory=lambda: ["ES", "NQ", "MNQ"])
     market_data_backfill_hours: int = Field(default=72, ge=1, le=24 * 30)
     # A feed is stale when the market is open and no bar arrived for this long.
     market_data_stale_seconds: int = Field(default=150, ge=10)
@@ -182,6 +171,9 @@ class Settings(BaseSettings):
     #: and how long a confirmed setup stays valid before it is EXPIRED.
     signal_min_confluence: int = Field(default=4, ge=4, le=5)
     signal_expiry_minutes: int = Field(default=30, ge=5, le=240)
+    #: A plan whose 1-contract loss at the stop (after costs) exceeds this is shown with a risk warning.
+    #: Informational only: structural levels are never moved to fit it.
+    signal_risk_warning_usd: float = Field(default=1000.0, gt=0)
     #: Instruments shown in the market analyzer (only these three are displayed).
     analyzer_symbols: list[str] = Field(default_factory=lambda: ["ES", "NQ", "MNQ"])
 

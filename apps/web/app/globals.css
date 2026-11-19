@@ -3,17 +3,20 @@
 /* PROJECT APEX — charcoal financial workstation palette.
    Green/red are reserved for P&L direction, amber for risk warnings. */
 :root {
-  --bg: #0e1013;
-  --panel: #15181d;
-  --panel-2: #1b1f25;
-  --border: #262b33;
-  --text: #e6e8eb;
-  --muted: #8b939e;
-  --faint: #5c636d;
-  --accent: #38bdf8;
-  --up: #34d399;
-  --down: #f05a5e;
-  --warn: #e3a33b;
+  /* PROJECT APEX - midnight navy / graphite terminal. Green and red only for direction, amber for risk. */
+  --bg: #060a12;
+  --bg-2: #0a1120;
+  --panel: #0e1626;
+  --panel-2: #142034;
+  --border: #1e2b42;
+  --text: #e8edf5;
+  --muted: #93a1b8;
+  --faint: #5d6b83;
+  --accent: #22d3ee;
+  --accent-2: #3b82f6;
+  --up: #10b981;
+  --down: #ef4444;
+  --warn: #f59e0b;
   --info: #38bdf8;
 }
 
@@ -29,6 +32,7 @@
   --color-up: var(--up);
   --color-down: var(--down);
   --color-warn: var(--warn);
+  --color-accent-2: var(--accent-2);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -38,12 +42,37 @@ html {
 }
 
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(34, 211, 238, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(59, 130, 246, 0.06), transparent 55%),
+    linear-gradient(180deg, var(--bg-2), var(--bg) 420px);
   color: var(--text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "tnum" 1;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  letter-spacing: 0.005em;
 }
+
+/* Glass panel: translucent graphite with a hairline highlight; text contrast stays high. */
+.apex-panel {
+  background: linear-gradient(180deg, rgba(20, 32, 52, 0.72), rgba(12, 19, 33, 0.78));
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 12px 32px -18px rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(10px);
+}
+.apex-card {
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+.apex-card:hover { transform: translateY(-1px); box-shadow: 0 16px 36px -20px rgba(34, 211, 238, 0.35); }
+.apex-glow-up { box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.45), 0 18px 40px -24px rgba(16, 185, 129, 0.6); }
+.apex-glow-down { box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45), 0 18px 40px -24px rgba(239, 68, 68, 0.6); }
+.apex-gradient-text {
+  background: linear-gradient(90deg, #e8edf5, #22d3ee 70%, #3b82f6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.apex-label { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
 
 :focus-visible {
   outline: 2px solid var(--accent);

@@ -4,6 +4,7 @@ export interface DataStatus {
   label: string; available: boolean; provider: string; quality: string; price: number | null;
   price_time: string | null; age_seconds: number | null; stale: boolean; market_open: boolean;
   contract: string | null; note: string | null; confidence?: string; confidence_note?: string;
+  change?: number; change_pct?: number | null; prev_session?: string; prev_close?: number;
 }
 export interface Bias {
   direction: "BULLISH" | "BEARISH" | "NEUTRAL" | "WAIT"; label: string; sentence: string;
@@ -30,7 +31,8 @@ export interface Candidate {
   requirements: { key: string; ok: boolean; detail: string }[]; missing: string[]; confirmed: boolean; evidence: string;
   trigger_at: string | null;
   levels: { entry: number; entry_zone: [number, number]; stop: number | null; stop_basis: string | null; tp1: number | null;
-    tp1_basis: string | null; tp2: number | null; tp2_basis: string | null; rr_tp1: Rr | null; rr_tp2: Rr | null };
+    tp1_basis: string | null; tp2: number | null; tp2_basis: string | null; rr_tp1: Rr | null; rr_tp2: Rr | null;
+    risk_usd_1c?: number | null; risk_warning?: string | null };
 }
 export interface Recorded {
   id: number; strategy_id: string; direction: "long" | "short"; score: number; evidence: string; contract: string | null;
@@ -38,6 +40,7 @@ export interface Recorded {
   entry_zone: [number, number]; stop: number; tp1: number; tp2: number | null; net_rr_tp1: number | null; rr_tp2: Rr | null;
   stop_basis: string | null; tp1_basis: string | null; tp2_basis: string | null; factors: Factor[]; status: string;
   status_reason: string | null; filled_at: string | null; display_state: string; entered: boolean; engine_version: string;
+  risk_usd_1c?: number | null; risk_warning?: string | null;
 }
 export interface SignalState {
   state: string; display_state?: string; best: Candidate | null; candidates: Candidate[]; factors: Factor[];
