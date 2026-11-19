@@ -73,3 +73,20 @@ async def test_api_upload_requires_admin(admin_client: httpx.AsyncClient, client
     assert r.status_code == 200 and r.json()["events"] == 3 and r.json()["high"] == 1
     cal = (await admin_client.get("/api/calendar", params={"days_ahead": 14})).json()
     assert cal["empty_calendar"] is False
+
+
+async def test_forecast_and_previous_published_later_reach_stored_events() -> None:
+    """Regression: an event first synced before ForexFactory filled in forecast/previous kept them blank."""
+    early = [{**SAMPLE[0], "forecast": "", "previous": ""}]
+    ev, _ = parse_forexfactory(early)
+    async with get_sessionmaker()() as s:
+        await upsert_ff_events(s, ev, "test")
+        await s.commit()
+        cpi = await s.scalar(select(EconomicEvent).where(EconomicEvent.title == "CPI m/m"))
+        assert cpi and cpi.forecast is None and cpi.previous is None
+        later, _ = parse_forexfactory(SAMPLE[:1])
+        await upsert_ff_events(s, later, "test")
+        await s.commit()
+        await s.refresh(cpi)
+        assert cpi.forecast == "0.3%" and cpi.previous == "0.2%"
+        assert await s.scalar(select(func.count()).select_from(EconomicEvent)) == 1

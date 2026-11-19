@@ -18,7 +18,7 @@ test("market analyzer: three cards, MNQ honestly unavailable, focused analysis s
   await expect(page.getByTestId("card-MNQ").getByTestId("price")).toHaveText("—");
   await expect(page.getByTestId("card-MNQ").getByTestId("bias")).toHaveText("WAIT / INSUFFICIENT DATA");
   await expect(page.getByTestId("card-MNQ").getByTestId("card-state")).toHaveText("WAIT");
-  await expect(page.getByTestId("card-ES").getByTestId("card-state")).toHaveText(/^(BUY SETUP|SELL SETUP|DEVELOPING BUY|DEVELOPING SELL|WAIT|INVALIDATED|EXPIRED|MISSED)$/);
+  await expect(page.getByTestId("card-ES").getByTestId("card-state")).toHaveText(/^(TECHNICAL BUY|TECHNICAL SELL|DEVELOPING BUY|DEVELOPING SELL|WAIT|INVALIDATED|EXPIRED|MISSED)$/);
   await expect(page.getByTestId("card-ES").getByTestId("card-confluence")).toHaveText(/^[0-5]\/5$/);
 
   await page.getByTestId("card-NQ").click();

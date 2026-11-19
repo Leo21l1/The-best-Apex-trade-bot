@@ -360,6 +360,10 @@ async def upsert_ff_events(session: AsyncSession, events: Sequence[FFEvent], sou
                 "category": stmt.excluded.category,
                 "importance": stmt.excluded.importance,
                 "affected": stmt.excluded.affected,
+                # ForexFactory fills these in during the week: an event first stored without them must
+                # pick them up on a later sync. The source is mirrored as-is (never invented locally).
+                "forecast": stmt.excluded.forecast,
+                "previous": stmt.excluded.previous,
             },
         )
         await session.execute(stmt)

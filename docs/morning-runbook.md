@@ -20,8 +20,15 @@ PROJECT APEX is analysis only: no broker connection, no orders. Readiness is not
    * The News tab shows "Last successful download" and the next high-impact USD event.
 4. Strategy triggers are evaluated 09:35-15:30 ET, and confirmations also need the New York session.
    Before then, cards show bias, structure and developing setups only.
-5. Every setup is RESEARCH / UNVALIDATED unless the evidence label says VALIDATED. A plan whose
-   1-contract risk exceeds $1,000 shows a warning; its structural stop is not moved.
+5. Technical detection and trade readiness are separate. A 4/5 setup that meets every technical rule
+   shows TECHNICAL BUY / TECHNICAL SELL with its entry, stop, TP1 and TP2, and is recorded once
+   (immutable) for forward paper testing whatever its evidence. Next to it the readiness box reads
+   NOT VALIDATED · NOT TRADE-READY unless the strategy is VALIDATED; with
+   APEX_REQUIRE_VALIDATED_STRATEGY=true the entry-confirmation checklist stays at WAIT for it. Nothing
+   in PROJECT APEX is an approval for real-money trading. A plan whose 1-contract risk exceeds $1,000
+   shows a warning; its structural stop is not moved.
+6. Session VWAP is anchored at 09:30 ET, so before the open the momentum factor reads UNKNOWN (never
+   PASS). MNQ has no research study of its own: its setups are labeled INSUFFICIENT EVIDENCE.
 
 If anything essential fails, fix it before relying on the dashboard. Do not run research jobs
 (confluence-study, research-study) during market hours.

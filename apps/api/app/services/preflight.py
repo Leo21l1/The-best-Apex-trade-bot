@@ -182,7 +182,13 @@ async def run_preflight(session: AsyncSession, symbols: list[str], now: datetime
         stdy = await latest(session, sym)
         if stdy is None:
             out.append(
-                _line(f"{sym} research", "WARN", "no research study stored: every setup shows WAIT (no evidence)")
+                _line(
+                    f"{sym} research",
+                    "WARN",
+                    "no research study stored: technical setups are still analyzed but every one is labeled "
+                    "INSUFFICIENT EVIDENCE (RESEARCH / UNVALIDATED); the entry-confirmation checklist stays "
+                    "at WAIT while APEX_REQUIRE_VALIDATED_STRATEGY is on",
+                )
             )
             continue
         counts: dict[str, int] = {}

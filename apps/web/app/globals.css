@@ -46,6 +46,9 @@ body {
     radial-gradient(1200px 600px at 10% -10%, rgba(34, 211, 238, 0.07), transparent 60%),
     radial-gradient(900px 500px at 100% 0%, rgba(59, 130, 246, 0.06), transparent 55%),
     linear-gradient(180deg, var(--bg-2), var(--bg) 420px);
+  /* Paint the gradients once; below them the page continues in the base colour (no tiling seam). */
+  background-color: var(--bg);
+  background-repeat: no-repeat;
   color: var(--text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

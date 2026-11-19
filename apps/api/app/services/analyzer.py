@@ -261,7 +261,10 @@ def _data_status(symbol: str, m1: Sequence[Bar], feed: dict[str, Any], provider:
         label = "MARKET CLOSED"
     else:
         label = quality.upper()
-    contract = (feed.get("contracts") or {}).get(symbol)
+    # The feed stores {contract, instrument_id, rule, since} per symbol; expose the contract symbol as a
+    # string (the UI renders it and setup_signals.contract is a varchar) and the instrument id separately.
+    cmap = (feed.get("contracts") or {}).get(symbol)
+    contract = cmap.get("contract") if isinstance(cmap, dict) else cmap
     return {
         "label": label,
         "available": bool(last),
@@ -273,6 +276,7 @@ def _data_status(symbol: str, m1: Sequence[Bar], feed: dict[str, Any], provider:
         "stale": stale,
         "market_open": open_,
         "contract": contract,
+        "instrument_id": cmap.get("instrument_id") if isinstance(cmap, dict) else None,
         "feed_state": feed.get("state"),
         "note": None
         if last
@@ -1178,6 +1182,11 @@ def card(doc: dict[str, Any]) -> dict[str, Any]:
         "state": (doc.get("signal") or {}).get("display_state") or (doc.get("signal") or {}).get("state", "WAIT"),
         "confluence": {"score": conf.get("score"), "out_of": 5, "direction": conf.get("direction")} if conf else None,
         "last_confirmation": _last_conf(doc),
+        # Historical evidence of the strategy behind the shown setup (a label; it never gates detection).
+        "evidence": (
+            ((doc.get("signal") or {}).get("recorded") or {}).get("evidence")
+            or ((doc.get("signal") or {}).get("best") or {}).get("evidence")
+        ),
         "news": {"status": (doc.get("news") or {}).get("status"), "summary": (doc.get("news") or {}).get("summary")},
     }
 

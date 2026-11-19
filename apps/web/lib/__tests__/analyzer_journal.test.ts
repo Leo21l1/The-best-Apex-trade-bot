@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ageText, analyzerShapes, countdown, DEFAULT_OVERLAYS, evidenceText, headline, snapTime, type Analysis } from "../analyzer";
+import { ageText, analyzerShapes, countdown, DEFAULT_OVERLAYS, evidenceText, headline, readiness, snapTime, type Analysis } from "../analyzer";
 import { etLocalToIso, previewPnl } from "../journal_calc";
 
 describe("analyzer helpers", () => {
@@ -40,7 +40,7 @@ describe("analyzer helpers", () => {
 
 describe("signal labels", () => {
   it("shows BUY / SELL / WAIT headlines and never hides an unvalidated strategy", () => {
-    expect(headline("TECHNICAL BUY SETUP CONFIRMED")).toMatchObject({ text: "BUY SETUP" });
+    expect(headline("TECHNICAL BUY SETUP CONFIRMED")).toMatchObject({ text: "TECHNICAL BUY" });
     expect(headline("TECHNICAL SELL SETUP CONFIRMED").tone).toContain("text-down");
     expect(headline("DEVELOPING SELL").text).toBe("DEVELOPING SELL");
     expect(headline("EXPIRED").text).toBe("EXPIRED");
@@ -48,6 +48,10 @@ describe("signal labels", () => {
     expect(evidenceText("VALIDATED")).toEqual({ text: "VALIDATED", warn: false });
     expect(evidenceText("PROMISING BUT UNVALIDATED").text).toContain("RESEARCH / UNVALIDATED");
     expect(evidenceText(undefined).warn).toBe(true);
+    // Technical detection is never presented as trade readiness without validated evidence.
+    expect(readiness("PROMISING BUT UNVALIDATED")).toEqual({ text: "NOT VALIDATED · NOT TRADE-READY", warn: true });
+    expect(readiness(undefined).warn).toBe(true);
+    expect(readiness("VALIDATED").text).toContain("NOT A REAL-MONEY APPROVAL");
   });
 });
 

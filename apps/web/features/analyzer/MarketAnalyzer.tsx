@@ -7,7 +7,7 @@ import { CandleChart, type PriceLineSpec } from "@/features/charts/CandleChart";
 import { useCandles } from "@/features/charts/useCandles";
 import { usePolling } from "@/hooks/usePolling";
 import {
-  ageText, analyzerShapes, BIAS_TONE, DEFAULT_OVERLAYS, evidenceText, fmtPrice, headline, NEWS_TONE, STRATEGY_NAME,
+  ageText, analyzerShapes, BIAS_TONE, DEFAULT_OVERLAYS, evidenceText, fmtPrice, headline, NEWS_TONE, readiness, STRATEGY_NAME,
   type Analysis, type Card, type Factor, type OverlayOptions, type Overview,
 } from "@/lib/analyzer";
 import { formatEt } from "@/lib/format";
@@ -58,6 +58,11 @@ function InstrumentCard({ c, active, onOpen }: { c: Card; active: boolean; onOpe
         </div>
         <span className={cx("shrink-0 rounded-lg border px-2.5 py-1 text-xs font-bold tracking-[0.1em]", h.tone)} data-testid="card-state">{h.text}</span>
       </div>
+      {c.state.includes("SETUP CONFIRMED") && (
+        <p className={cx("mt-2 text-[10px] font-bold tracking-wide", readiness(c.evidence).warn ? "text-warn" : "text-up")} data-testid="card-readiness">
+          TECHNICAL SETUP DETECTED · {readiness(c.evidence).text}
+        </p>
+      )}
       <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="font-mono text-[28px] leading-none font-semibold tracking-tight" data-testid="price">{c.data.price == null ? "—" : fmtPrice(c.data.price)}</span>
         <Change d={c.data} />
@@ -161,6 +166,20 @@ function SetupPanel({ a }: { a: Analysis }) {
           <span className="rounded-full border border-warn/60 bg-warn/10 px-2.5 py-0.5 text-[11px] font-bold text-warn">{a.news.status}</span>
         )}
       </div>
+      {confirmed && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2" data-testid="readiness">
+          <div className={cx("rounded-lg border px-3 py-2", state.includes("BUY") ? "border-up/50 bg-up/10" : "border-down/50 bg-down/10")}>
+            <p className="apex-label">Technical analysis</p>
+            <p className={cx("text-sm font-bold", state.includes("BUY") ? "text-up" : "text-down")}>TECHNICAL SETUP DETECTED</p>
+            <p className="text-[11px] text-muted">All technical rules met on closed candles (confluence, structure, levels, R:R, news, data, time window).</p>
+          </div>
+          <div className={cx("rounded-lg border px-3 py-2", readiness(rec?.evidence ?? best?.evidence).warn ? "border-warn/60 bg-warn/10" : "border-up/50 bg-up/10")}>
+            <p className="apex-label">Trade readiness (evidence gate)</p>
+            <p className={cx("text-sm font-bold", readiness(rec?.evidence ?? best?.evidence).warn ? "text-warn" : "text-up")} data-testid="readiness-state">{readiness(rec?.evidence ?? best?.evidence).text}</p>
+            <p className="text-[11px] text-muted">Recorded for forward paper testing. Not approved for real-money trading; any order is your own decision.</p>
+          </div>
+        </div>
+      )}
       {rec?.status_reason && <p className="mt-2 text-xs text-warn">{rec.status_reason}</p>}
       {sig.note && !best && <p className="mt-2 text-xs text-muted">{sig.note}</p>}
 
@@ -180,7 +199,10 @@ function SetupPanel({ a }: { a: Analysis }) {
           <p className="mt-2 text-[11px] text-faint">Stop: {lv.stopBasis ?? "—"} · TP1: {lv.tp1Basis ?? "—"}{lv.tp2Basis ? ` · TP2: ${lv.tp2Basis}` : ""}. Analytical levels, not orders or guaranteed fills. Expires {rec ? `at ${rec.expires_at_et}` : "30 min after confirmation"}; invalidated by an opposite 5m structure shift before entry.</p>
         </>
       ) : (
-        <p className="mt-4 text-sm text-muted">No strategy has produced a plan with valid structural levels right now.</p>
+        <>
+          <p className="apex-label mt-4">3 · Entry plan</p>
+          <p className="mt-1 text-sm text-muted" data-testid="no-plan">No strategy has produced a plan with valid structural levels right now. Entry, stop, TP1 and TP2 appear here only when they can be derived from structure; none are invented.</p>
+        </>
       )}
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -243,8 +265,8 @@ function StructurePanel({ a }: { a: Analysis }) {
       ) : <p className="mb-3 text-sm text-faint">No notable structure events, sweeps or zone retests right now.</p>}
       {keyLevels.length ? (
         <div className="-mx-4 overflow-x-auto">
-          <table className="w-full min-w-[560px] text-xs" data-testid="levels">
-            <thead><tr className="text-left">{["Level", "Price", "TF", "Status", "Distance"].map((h) => <th key={h} className="apex-label px-2 py-1.5 font-medium first:pl-4">{h}</th>)}</tr></thead>
+          <table className="w-full text-xs sm:min-w-[560px]" data-testid="levels">
+            <thead><tr className="text-left">{["Level", "Price", "TF", "Status", "Distance"].map((h) => <th key={h} className={cx("apex-label px-2 py-1.5 font-medium first:pl-4", h === "TF" && "hidden sm:table-cell")}>{h}</th>)}</tr></thead>
             <tbody>
               {keyLevels.map((l) => {
                 const isPrice = Math.abs(l.distance) < tick * 0.5;
@@ -252,7 +274,7 @@ function StructurePanel({ a }: { a: Analysis }) {
                   <tr key={`${l.label}-${l.price}`} className={cx("border-t border-line/40 hover:bg-panel-2/40", isPrice && "bg-accent/5")}>
                     <td className="px-2 py-1.5 pl-4">{l.label}</td>
                     <td className="px-2 py-1.5 font-mono">{l.top != null && l.bottom != null ? `${fmtPrice(l.bottom, tick)}–${fmtPrice(l.top, tick)}` : fmtPrice(l.price, tick)}</td>
-                    <td className="px-2 py-1.5 font-mono text-muted">{l.timeframe}</td>
+                    <td className="hidden px-2 py-1.5 font-mono text-muted sm:table-cell">{l.timeframe}</td>
                     <td className="px-2 py-1.5 text-muted">{l.state}</td>
                     <td className={cx("px-2 py-1.5 font-mono", l.distance > 0 ? "text-down/80" : "text-up/80")}>{l.distance > 0 ? "+" : ""}{fmtPrice(l.distance, tick)}</td>
                   </tr>

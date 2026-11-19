@@ -185,7 +185,13 @@ export function CandleChart({
     } else {
       cs.setData(bars.map(toCandle));
       vs.setData(bars.map(toVolume));
-      if (prev?.key !== seriesKey) chart.current?.timeScale().scrollToRealTime();
+      if (prev?.key !== seriesKey) {
+        // A short history (e.g. 1h) would otherwise leave the left of the chart empty: fit it to the width.
+        const ts = chart.current?.timeScale();
+        const capacity = ts ? ts.width() / Math.max(ts.options().barSpacing, 1) : 0;
+        if (ts && bars.length > 0 && bars.length < capacity) ts.fitContent();
+        else ts?.scrollToRealTime();
+      }
     }
     drawn.current = { key: seriesKey, first, length: bars.length };
   }, [bars, seriesKey]);

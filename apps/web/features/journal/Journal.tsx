@@ -61,7 +61,8 @@ export function Journal() {
                 <Stat label="Expectancy" value={money(s.expectancy)} />
                 <Stat label="Max drawdown" value={money(s.max_drawdown)} />
                 <Stat label="Gross P&L" value={money(s.gross_pnl ?? null, true)} />
-                <Stat label="Avg win / loss" value={`${money(s.avg_win)} / ${money(s.avg_loss)}`} />
+                <Stat label="Avg win" value={<span className={s.avg_win == null ? undefined : "text-up"}>{money(s.avg_win)}</span>} />
+                <Stat label="Avg loss" value={<span className={s.avg_loss == null ? undefined : "text-down"}>{money(s.avg_loss)}</span>} />
                 <Stat label="Average R" value={s.avg_r == null ? "—" : `${s.avg_r}R`} hint={s.r_trades ? `${s.r_trades} trades with a stop` : "needs a stop-loss"} />
                 <Stat label="Best streak" value={s.max_consecutive_wins ?? "—"} hint="consecutive wins" />
                 <Stat label="Worst streak" value={s.max_consecutive_losses ?? "—"} hint="consecutive losses" />

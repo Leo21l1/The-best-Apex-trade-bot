@@ -307,7 +307,13 @@ def factors(doc: dict[str, Any], d: str, cfg: SetupConfig, family: str | None = 
     vw, vol, sess = c.get("vwap") or {}, c.get("volatility") or {}, c.get("session")
     bars = c.get("m5_last") or []
     if not vw.get("available") or not bars:
-        out.append(_f(5, "UNKNOWN", "VWAP or 5m candles unavailable."))
+        why = (
+            "5m candles unavailable."
+            if not bars
+            else "Session VWAP not available: it is anchored at 09:30 ET and starts with the first closed "
+            "regular-hours candle (not computed overnight)."
+        )
+        out.append(_f(5, "UNKNOWN", why))
     else:
         b = bars[-1]
         rng = max(b["h"] - b["l"], 1e-9)

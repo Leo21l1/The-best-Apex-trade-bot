@@ -21,7 +21,7 @@ export interface Card {
   headline_structure: string | null; liquidity: { above: Level | null; below: Level | null };
   setup: { strategy: string; direction: string } | null; quality: number | null; news: NewsBrief;
   state: string; confluence: { score: number; out_of: number; direction: string | null } | null;
-  last_confirmation: string | null;
+  last_confirmation: string | null; evidence?: string | null;
 }
 export interface Overview { as_of: string; cards: Card[]; note: string; disclaimer: string }
 export interface Factor { n: number; name: string; status: "PASS" | "FAIL" | "UNKNOWN"; detail: string; event?: string | null }
@@ -175,14 +175,23 @@ export const STRATEGY_NAME: Record<string, string> = {
   smc_ob_retest: "Order Block Retest", smc_fvg_retest: "Fair Value Gap Retest",
 };
 
-/** Short card headline: BUY SETUP / SELL SETUP / DEVELOPING ... / WAIT (and ended states). */
+/** Short card headline: TECHNICAL BUY / TECHNICAL SELL / DEVELOPING ... / WAIT (and ended states). */
 export function headline(state: string): { text: string; tone: string } {
-  if (state.includes("BUY SETUP CONFIRMED")) return { text: "BUY SETUP", tone: "text-up border-up/50 bg-up/10" };
-  if (state.includes("SELL SETUP CONFIRMED")) return { text: "SELL SETUP", tone: "text-down border-down/50 bg-down/10" };
+  if (state.includes("BUY SETUP CONFIRMED")) return { text: "TECHNICAL BUY", tone: "text-up border-up/50 bg-up/10" };
+  if (state.includes("SELL SETUP CONFIRMED")) return { text: "TECHNICAL SELL", tone: "text-down border-down/50 bg-down/10" };
   if (state === "DEVELOPING BUY") return { text: "DEVELOPING BUY", tone: "text-up/80 border-up/30" };
   if (state === "DEVELOPING SELL") return { text: "DEVELOPING SELL", tone: "text-down/80 border-down/30" };
   if (["INVALIDATED", "EXPIRED", "MISSED"].includes(state)) return { text: state, tone: "text-warn border-warn/40" };
   return { text: "WAIT", tone: "text-muted border-line bg-panel-2" };
+}
+
+/**
+ * Trade readiness is separate from technical detection: a setup can meet every technical rule while its
+ * strategy has no validated historical evidence. Nothing here ever means approval for real-money trading.
+ */
+export function readiness(label: string | null | undefined): { text: string; warn: boolean } {
+  if (label === "VALIDATED") return { text: "VALIDATED FOR PAPER-TRADING CONSIDERATION · NOT A REAL-MONEY APPROVAL", warn: false };
+  return { text: "NOT VALIDATED · NOT TRADE-READY", warn: true };
 }
 
 export function evidenceText(label: string | undefined): { text: string; warn: boolean } {
